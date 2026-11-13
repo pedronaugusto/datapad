@@ -41,6 +41,25 @@ pub fn dev(b: *std.Build, tools: type) void {
     const test_step = b.step("test", "Run the tests");
     test_step.dependOn(&b.addRunArtifact(tests).step);
     check.dependOn(&tests.step);
+
+    // The entity table's generator, on the build host: `entities` writes
+    // src/scan/entities.zig from WHATWG's entities.json, and the tests fail
+    // unless writing it again gives the same bytes.
+    const generator = b.addExecutable(.{
+        .name = "generate",
+        .root_module = b.createModule(.{ .root_source_file = p.path("tools/generate.zig"), .target = b.graph.host, .optimize = .safe }),
+    });
+    const write = b.addRunArtifact(generator);
+    write.setCwd(p.path("."));
+    write.addArgs(&.{ "testdata/whatwg/entities.json", "src/scan/entities.zig" });
+    write.has_side_effects = true;
+    b.step("entities", "Write src/scan/entities.zig from testdata/whatwg/entities.json").dependOn(&write.step);
+    const compare = b.addRunArtifact(generator);
+    compare.setCwd(p.path("."));
+    compare.addArgs(&.{ "testdata/whatwg/entities.json", "src/scan/entities.zig", "--check" });
+    compare.has_side_effects = true;
+    test_step.dependOn(&compare.step);
+    check.dependOn(&generator.step);
     b.getInstallStep().dependOn(&tests.step);
     // The release tier runs every property under Zig's fuzzer (each shakedown
     // property is a fuzz target) and the suite with safety on.

@@ -12,6 +12,9 @@
   "test_dependencies": [
     "shakedown"
   ],
+  "shipped": {
+    "LICENSES": "the licence of the WHATWG table src/scan/entities.zig is generated from: CC BY 4.0 asks that it travel with the code made from it"
+  },
   "function_exceptions": {},
   "layout_exceptions": {},
   "glint_paths": [
