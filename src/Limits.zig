@@ -8,9 +8,19 @@ const Span = @import("Span.zig");
 pub const Block = struct {};
 pub const Reference = struct {};
 
+/// Which limit a refusal met.
+pub const Limit = enum { input, depth, blocks, references, expansion };
+
+/// Where a refusal met its limit: the offset in the text (for `input`, the
+/// limit itself), and which.
+pub const Diagnostic = struct {
+    offset: Span.Offset = .fromRaw(0),
+    limit: Limit = .input,
+};
+
 /// The longest text accepted.
 input: Span.Offset = .literal("16MiB"),
-/// How deep containers (block quotes, list items) may nest.
+/// How deep containers (block quotes, lists, list items) may nest.
 depth: aegis.int.Ranged(u16, 1, 1024) = .literal(128),
 /// Blocks one document may hold.
 blocks: aegis.units.Count(Block, u32) = .fromRaw(1 << 20),

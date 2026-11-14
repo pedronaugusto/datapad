@@ -19,12 +19,12 @@ pub fn of(s: Span, text: []const u8) []const u8 {
     return text[s.start.raw()..s.end.raw()];
 }
 
-pub fn len(s: Span) u32 {
-    return s.end.raw() - s.start.raw();
+pub fn len(s: Span) Offset {
+    return s.end.sub(s.start) catch aegis.assert.never("a span ends at or after its start");
 }
 
 test "a span is the bytes between its offsets" {
     const s: Span = .init(2, 5);
     try @import("std").testing.expectEqualStrings("cde", s.of("abcdefg"));
-    try @import("std").testing.expectEqual(3, s.len());
+    try @import("std").testing.expectEqual(3, s.len().raw());
 }

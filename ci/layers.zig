@@ -5,6 +5,9 @@ pub const layers: []const gantry.rules.Layer = &.{
     .{ .name = "vocabulary", .patterns = &.{ "src/Span.zig", "src/Limits.zig", "src/Options.zig" } },
     .{ .name = "scan", .patterns = &.{ "src/scan/chars.zig", "src/scan/line.zig", "src/scan/entities.zig" } },
     .{ .name = "scan entry", .patterns = &.{"src/scan.zig"} },
+    .{ .name = "blocks", .patterns = &.{ "src/block/Block.zig", "src/block/leaves.zig", "src/block/references.zig", "src/block/containers.zig" } },
+    .{ .name = "blocks entry", .patterns = &.{"src/block.zig"} },
+    .{ .name = "document", .patterns = &.{"src/Document.zig"} },
     .{ .name = "public", .patterns = &.{"src/datapad.zig"} },
 };
 
@@ -33,5 +36,11 @@ pub const required = [_][]const u8{
     "src/scan/line.zig",
     "src/scan/entities.zig",
     "src/scan.zig",
+    "src/block/Block.zig",
+    "src/block/leaves.zig",
+    "src/block/references.zig",
+    "src/block/containers.zig",
+    "src/block.zig",
+    "src/Document.zig",
     "src/datapad.zig",
 };

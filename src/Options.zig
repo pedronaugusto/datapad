@@ -1,6 +1,5 @@
 //! What a parse reads: CommonMark alone, or with GFM's extensions and the
 //! two syntaxes tycho's consumers need, each a flag.
-const Options = @This();
 
 /// The constructs past CommonMark a parse reads.
 pub const Extensions = packed struct {
