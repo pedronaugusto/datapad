@@ -5,4 +5,6 @@ test {
     _ = @import("scan/scan_test.zig");
     _ = @import("block/blocks_test.zig");
     _ = @import("block/properties_test.zig");
+    _ = @import("inline/inlines_test.zig");
+    _ = @import("inline/properties_test.zig");
 }

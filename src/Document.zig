@@ -18,6 +18,11 @@ pub const Reference = references.Reference;
 gpa: std.mem.Allocator,
 source: []const u8,
 tables: containers.Tables,
+/// The limits it was parsed under: `Events` checks `expansion`.
+limits: Limits,
+/// Where `parse`, and `Events.next` at the expansion limit, say which
+/// limit a refusal met.
+diagnostics: ?*Limits.Diagnostic,
 
 pub const Options = struct {
     extensions: Extensions = .gfm,
@@ -39,7 +44,13 @@ const Run = struct {
     options: Options,
 
     fn read(r: Run, bytes: []const u8) ParseError!Document {
-        return .{ .gpa = r.gpa, .source = bytes, .tables = try containers.run(r.gpa, bytes, r.options.limits, r.options.diagnostics) };
+        return .{
+            .gpa = r.gpa,
+            .source = bytes,
+            .tables = try containers.run(r.gpa, bytes, r.options.limits, r.options.diagnostics),
+            .limits = r.options.limits,
+            .diagnostics = r.options.diagnostics,
+        };
     }
 };
 

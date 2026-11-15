@@ -36,7 +36,7 @@ pub const Definition = struct {
 };
 
 /// The longest label: 999 characters between the brackets.
-const most_label = 999;
+pub const most_label = 999;
 
 /// The definition `s` starts with, or null.
 pub fn parse(s: []const u8) ?Definition {
@@ -70,7 +70,7 @@ fn lineEnd(s: []const u8, from: usize) ?usize {
 }
 
 /// Past spaces and tabs, at most one line feed, and spaces and tabs after it.
-fn spaceAndLine(s: []const u8, from: usize) usize {
+pub fn spaceAndLine(s: []const u8, from: usize) usize {
     var at = from;
     while (at < s.len and chars.isSpaceOrTab(s[at])) at += 1;
     if (at < s.len and s[at] == '\n') {
@@ -80,13 +80,13 @@ fn spaceAndLine(s: []const u8, from: usize) usize {
     return at;
 }
 
-const Label = struct { inner: Range, end: usize };
+pub const Label = struct { inner: Range, end: usize };
 
 /// A link label (§6.3) at the start of `s`: `[`, up to 999 characters with
 /// no bracket unless escaped, `]`. `end` is the closing bracket's index.
 /// Whether it holds anything but whitespace is the normalized label's to
 /// say.
-fn linkLabel(s: []const u8) ?Label {
+pub fn linkLabel(s: []const u8) ?Label {
     if (s.len == 0 or s[0] != '[') return null;
     var at: usize = 1;
     while (at < s.len and at - 1 <= most_label) {
@@ -100,12 +100,12 @@ fn linkLabel(s: []const u8) ?Label {
     return null;
 }
 
-const Destination = struct { range: Range, after: usize };
+pub const Destination = struct { range: Range, after: usize };
 
 /// A link destination (§6.6) at `from`: between `<` and `>` with no line
 /// end and no unescaped angle bracket, or a nonempty run with no space or
 /// ASCII control character and its unescaped parentheses balanced.
-fn linkDestination(s: []const u8, from: usize) ?Destination {
+pub fn linkDestination(s: []const u8, from: usize) ?Destination {
     if (from >= s.len) return null;
     if (s[from] == '<') {
         var at = from + 1;
@@ -139,12 +139,12 @@ fn linkDestination(s: []const u8, from: usize) ?Destination {
     return .{ .range = .{ .start = from, .end = at }, .after = at };
 }
 
-const Title = struct { range: Range, after: usize };
+pub const Title = struct { range: Range, after: usize };
 
 /// A link title (§6.6) at `from`: between `"` or `'` with that quote only
 /// escaped inside, or between parentheses with neither unescaped inside.
 /// It may run over lines, but a paragraph's text has no blank one.
-fn linkTitle(s: []const u8, from: usize) ?Title {
+pub fn linkTitle(s: []const u8, from: usize) ?Title {
     if (from >= s.len) return null;
     const close: u8 = switch (s[from]) {
         '"' => '"',
