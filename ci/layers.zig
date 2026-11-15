@@ -14,6 +14,7 @@ pub const layers: []const gantry.rules.Layer = &.{
     .{ .name = "inlines", .patterns = &.{"src/inline/Leaf.zig"} },
     .{ .name = "inlines entry", .patterns = &.{"src/inline.zig"} },
     .{ .name = "events", .patterns = &.{"src/Events.zig"} },
+    .{ .name = "writers", .patterns = &.{"src/html.zig"} },
     .{ .name = "public", .patterns = &.{"src/datapad.zig"} },
 };
 
@@ -59,5 +60,6 @@ pub const required = [_][]const u8{
     "src/inline/Leaf.zig",
     "src/inline.zig",
     "src/Events.zig",
+    "src/html.zig",
     "src/datapad.zig",
 };

@@ -36,6 +36,8 @@ pub fn dev(b: *std.Build, tools: type) void {
         .imports = &.{.{ .name = "shakedown", .module = shakedown.module("shakedown") }},
     });
     addSourceImports(p, test_module, target, optimize);
+    // The CommonMark spec, read by the spec runner as it is (testdata/commonmark).
+    test_module.addAnonymousImport("commonmark_spec", .{ .root_source_file = p.path("testdata/commonmark/spec.txt") });
     const tests = b.addTest(.{ .name = "datapad-tests", .filters = filters, .root_module = test_module });
     const check = b.step("check", "Compile the tests without running them");
     const test_step = b.step("test", "Run the tests");

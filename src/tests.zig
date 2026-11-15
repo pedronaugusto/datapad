@@ -7,4 +7,5 @@ test {
     _ = @import("block/properties_test.zig");
     _ = @import("inline/inlines_test.zig");
     _ = @import("inline/properties_test.zig");
+    _ = @import("spec_test.zig");
 }

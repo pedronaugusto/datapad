@@ -12,6 +12,7 @@ pub const Events = @import("Events.zig");
 pub const Event = Events.Event;
 pub const Node = Events.Node;
 pub const Link = Events.Link;
+pub const html = @import("html.zig");
 
 test {
     _ = Span;
@@ -20,4 +21,5 @@ test {
     _ = @import("scan.zig");
     _ = Document;
     _ = Events;
+    _ = html;
 }
