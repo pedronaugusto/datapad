@@ -23,6 +23,7 @@ pub fn write(w: *std.Io.Writer, document: *const Document) std.Io.Writer.Error!v
                 try w.print("list {c} {s}", .{ l.marker, if (l.tight) "tight" else "loose" }),
             .code => |c| if (c.fenced) try w.print("code `{s}`", .{c.info.of(text)}) else try w.writeAll("code"),
             .html => |h| try w.print("html {d}", .{h.widen(u8)}),
+            .table => |n| try w.print("table {d}", .{n}),
         }
         try w.writeByte('\n');
         for (document.lines(b)) |l| {

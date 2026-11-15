@@ -9,6 +9,7 @@ const std = @import("std");
 const aegis = @import("aegis");
 const Span = @import("../Span.zig");
 const Limits = @import("../Limits.zig");
+const Extensions = @import("../Options.zig").Extensions;
 const chars = @import("../scan/chars.zig");
 const Block = @import("Block.zig");
 const leaves = @import("leaves.zig");
@@ -51,13 +52,13 @@ pub const Tables = struct {
     }
 };
 
-pub fn run(gpa: Allocator, text: []const u8, limits: Limits, diagnostics: ?*Limits.Diagnostic) Error!Tables {
+pub fn run(gpa: Allocator, text: []const u8, extensions: Extensions, limits: Limits, diagnostics: ?*Limits.Diagnostic) Error!Tables {
     const len = std.math.cast(u32, text.len);
     if (len == null or Span.Offset.fromRaw(len orelse 0).compare(limits.input) == .gt) {
         if (diagnostics) |d| d.* = .{ .offset = limits.input, .limit = .input };
         return error.InputTooLong;
     }
-    var p: Pass = .{ .gpa = gpa, .text = text, .limits = limits, .diagnostics = diagnostics };
+    var p: Pass = .{ .gpa = gpa, .text = text, .extensions = extensions, .limits = limits, .diagnostics = diagnostics };
     defer p.deinit();
     try p.stack.append(gpa, .{ .kind = .document, .block = std.math.maxInt(u32), .end_line = 0 });
     var start: usize = 0;
@@ -88,6 +89,7 @@ const Kind = enum {
     thematic_break,
     code_block,
     html_block,
+    table,
 
     fn record(k: Kind) Block.Kind {
         return switch (k) {
@@ -142,6 +144,8 @@ const Started = enum { none, container, leaf };
 const Pass = struct {
     gpa: Allocator,
     text: []const u8,
+    /// Which GFM blocks to read: tables.
+    extensions: Extensions,
     limits: Limits,
     diagnostics: ?*Limits.Diagnostic,
     blocks: std.ArrayList(Block) = .empty,
@@ -349,7 +353,7 @@ const Pass = struct {
             try p.closeUnmatched();
             const kind = p.stack.items[container].kind;
             switch (kind) {
-                .paragraph, .code_block, .html_block => if (!p.consumed) {
+                .paragraph, .code_block, .html_block, .table => if (!p.consumed) {
                     try p.addLine();
                     if (kind == .code_block and p.tip().fenced) p.touch();
                     if (kind == .html_block and p.tip().html.widen(u8) <= 5 and leaves.htmlEnd(p.tip().html, p.line[p.offset..])) {
@@ -391,7 +395,7 @@ const Pass = struct {
                 p.advanceOffset(open.content, true);
                 return .matched;
             },
-            .paragraph => return if (p.blank) .failed else .matched,
+            .paragraph, .table => return if (p.blank) .failed else .matched,
             .heading, .thematic_break => return .failed,
             .html_block => return if (p.blank and open.html.widen(u8) >= 6) .failed else .matched,
             .code_block => {
@@ -482,6 +486,7 @@ const Pass = struct {
                     return .leaf;
                 }
             };
+            if (kind == .paragraph and p.extensions.tables) if (try p.table(rest)) return .leaf;
             if (leaves.thematicBreak(rest)) {
                 try p.closeUnmatched();
                 try p.addChild(.thematic_break, at);
@@ -503,7 +508,8 @@ const Pass = struct {
             p.tip().content = m.content;
             return .container;
         };
-        if (indented and p.tip().kind != .paragraph and !p.blank) {
+        // Indented code interrupts neither a paragraph nor a table.
+        if (indented and p.tip().kind != .paragraph and p.tip().kind != .table and !p.blank) {
             p.advanceOffset(4, true);
             try p.closeUnmatched();
             try p.addChild(.code_block, p.offset);
@@ -511,6 +517,40 @@ const Pass = struct {
             return .leaf;
         }
         return .none;
+    }
+
+    /// GFM's table: a delimiter row under a paragraph's last line with as
+    /// many cells. That line becomes the table's header row; the lines
+    /// before it stay a paragraph.
+    fn table(p: *Pass, rest: []const u8) Error!bool {
+        const columns = leaves.delimiterRow(rest) orelse return false;
+        const b = p.record();
+        if (b.line_count == 0) return false;
+        const header = p.lines.items[b.first_line + b.line_count - 1];
+        if (header.spaces != 0 or leaves.Cells.count(header.of(p.text)) != columns) return false;
+        try p.closeUnmatched();
+        if (b.line_count == 1) {
+            b.kind = .table;
+            p.tip().kind = .table;
+        } else {
+            // The paragraph ends a line sooner; the table starts there.
+            const paragraph = p.record();
+            paragraph.line_count -= 1;
+            p.lines.shrinkRetainingCapacity(p.lines.items.len - 1);
+            paragraph.span.end = .fromRaw(p.lines.items[paragraph.first_line + paragraph.line_count - 1].end);
+            try p.closeTip();
+            try p.addChild(.table, 0);
+            const t = p.record();
+            t.span = .init(header.start, header.start);
+            t.first_line = @intCast(p.lines.items.len);
+            try p.lines.append(p.gpa, header);
+            t.line_count = 1;
+        }
+        p.record().data = .{ .table = @intCast(columns) };
+        try p.addLine();
+        p.toLineEnd();
+        p.consumed = true;
+        return true;
     }
 
     const ListMarker = struct { ordered: bool, start: u32, char: u8, content: u32 };

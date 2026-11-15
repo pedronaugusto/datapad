@@ -21,6 +21,7 @@ const code = @import("code.zig");
 const html = @import("html.zig");
 const autolink = @import("autolink.zig");
 const reference = @import("reference.zig");
+const extended = @import("extended.zig");
 
 const none = items.none;
 
@@ -32,6 +33,9 @@ pub const Record = struct {
     span: Span,
     /// Its reference passed the expansion limit.
     over: bool = false,
+    /// A GFM extended autolink, read bare in text: a link around it takes
+    /// it back as text.
+    bare: bool = false,
 };
 
 /// A link's title and label, which `Events.title` and `Events.label` give,
@@ -65,16 +69,17 @@ pub const Memory = aegis.parts.Block(struct {
 });
 
 /// What a leaf of `bytes` (its lines, a line feed counted after each)
-/// needs. Each count bounds what one byte can make: an item per byte read
-/// and one per delimiter character a match takes, a link per three bytes
-/// (`[a]`), a backtick run per two.
+/// needs. Each count bounds what one byte can make: an item per byte read,
+/// one per delimiter character a match takes, and four per e-mail address
+/// (of three bytes at least, `a@b.c` five); a link per three bytes (`[a]`),
+/// a backtick run per two.
 pub fn counts(bytes: usize) Memory.Counts {
     const runs = code.Table.bounds(bytes);
     return .{
         .joined = bytes,
         .line_joined = bytes + 1,
         .line_source = bytes + 1,
-        .items = 2 * bytes + 4,
+        .items = 3 * bytes + 8,
         .delimiters = bytes + 1,
         .brackets = bytes + 1,
         .records = bytes / 3 + 2,
@@ -100,6 +105,11 @@ part_count: u32 = 0,
 cursor: u32,
 /// In a code span or raw HTML over lines: where its next piece starts.
 piece: u32 = none,
+/// A task list item's marker (GFM) this leaf begins with, given before its
+/// content: whether it is checked, and its `[` to `]` in the joined text.
+task: ?Task = null,
+
+pub const Task = struct { done: bool, start: u32, end: u32 };
 
 /// No leaf: nothing to give out, and no link's parts.
 pub const empty: Leaf = .{
@@ -113,8 +123,9 @@ pub const empty: Leaf = .{
 };
 
 /// Reads the leaf whose content lines are `lines` into `memory`, laid out
-/// by `counts` of at least its bytes.
-pub fn read(memory: Memory, document: *const Document, lines: []const Block.Line, expansion: *Expansion) Leaf {
+/// by `counts` of at least its bytes. `item_start`: the leaf is the first
+/// block of a list item, where GFM reads a task list item's marker.
+pub fn read(memory: Memory, document: *const Document, lines: []const Block.Line, expansion: *Expansion, item_start: bool) Leaf {
     const m = memory.parts();
     const text = document.text();
     var n: usize = 0;
@@ -154,10 +165,31 @@ pub fn read(memory: Memory, document: *const Document, lines: []const Block.Line
         .records = m.records,
         .expansion = expansion,
     };
+    if (item_start and document.extensions.task_lists) leaf.task = taskMarker(leaf.s);
+    if (leaf.task) |t| p.pos = t.end;
     p.run();
     leaf.records = m.records[0..p.record_count];
     leaf.cursor = leaf.list.head;
     return leaf;
+}
+
+/// A task list item's marker at the start of `s` (GFM): spaces, `[`, a
+/// space, a tab or an `x` in either case, `]`, then whitespace before
+/// anything else.
+fn taskMarker(s: []const u8) ?Task {
+    var i: usize = 0;
+    while (i < s.len and s[i] == ' ') i += 1;
+    if (s.len < i + 4 or s[i] != '[' or s[i + 2] != ']') return null;
+    const done = switch (s[i + 1]) {
+        ' ', '\t' => false,
+        'x', 'X' => true,
+        else => return null,
+    };
+    switch (s[i + 3]) {
+        ' ', '\t', '\n' => {},
+        else => return null,
+    }
+    return .{ .done = done, .start = @intCast(i), .end = @intCast(i + 3) };
 }
 
 /// Where the joined text's offset `j` lies in the document's text.
@@ -184,6 +216,10 @@ pub fn part(leaf: *const Leaf, link: event.Link) ?Part {
 
 /// The next event of the leaf's content, or null at its end.
 pub fn next(leaf: *Leaf) error{ExpansionTooLarge}!?event.Event {
+    if (leaf.task) |t| {
+        leaf.task = null;
+        return .{ .span = leaf.spanOf(t.start, t.end), .kind = .{ .task = t.done } };
+    }
     const list = &leaf.list;
     while (leaf.cursor != none) {
         const at = leaf.cursor;
@@ -228,14 +264,22 @@ pub fn next(leaf: *Leaf) error{ExpansionTooLarge}!?event.Event {
                 const whole = leaf.spanOf(it.start, it.end);
                 return .{ .span = whole, .kind = if (it.kind == .code) .{ .code = piece } else .{ .html = piece } };
             },
-            .emphasis_open, .strong_open => {
+            .emphasis_open, .strong_open, .strike_open => {
                 leaf.cursor = it.next;
-                const node: event.Node = if (it.kind == .strong_open) .strong else .emphasis;
+                const node: event.Node = switch (it.kind) {
+                    .strong_open => .strong,
+                    .strike_open => .strikethrough,
+                    else => .emphasis,
+                };
                 return .{ .span = leaf.spanOf(it.start, list.items[it.a].end), .kind = .{ .enter = node } };
             },
-            .emphasis_close, .strong_close => {
+            .emphasis_close, .strong_close, .strike_close => {
                 leaf.cursor = it.next;
-                const node: event.Node = if (it.kind == .strong_close) .strong else .emphasis;
+                const node: event.Node = switch (it.kind) {
+                    .strong_close => .strong,
+                    .strike_close => .strikethrough,
+                    else => .emphasis,
+                };
                 return .{ .span = leaf.spanOf(list.items[it.a].start, it.end), .kind = .{ .exit = node } };
             },
             .link_open, .link_close => {
@@ -259,7 +303,8 @@ pub fn refused(leaf: *const Leaf) Span {
 /// The bytes that start an inline construct; every other byte is text.
 const special = blk: {
     var t: [256]bool = @splat(false);
-    for ("\n\\`*_[!]<&") |c| t[c] = true;
+    // `w`, `h` and `f` start GFM's extended www and URL autolinks.
+    for ("\n\\`*_~[!]<&whf") |c| t[c] = true;
     break :blk t;
 };
 
@@ -293,6 +338,7 @@ const Parser = struct {
         return at;
     }
 
+    /// Reads from `pos`: the leaf's start, or past a task marker.
     fn run(p: *Parser) void {
         const s = p.s;
         while (p.pos < s.len and chars.isSpaceOrTab(s[p.pos])) p.pos += 1;
@@ -308,12 +354,18 @@ const Parser = struct {
                 '\\' => p.backslash(),
                 '`' => p.backticks(),
                 '*', '_' => p.delimiterRun(c),
+                '~' => if (p.document.extensions.strikethrough) p.delimiterRun(c) else {
+                    p.pos += 1;
+                },
                 '[' => p.openBracket(1, false),
                 '!' => if (p.pos + 1 < s.len and s[p.pos + 1] == '[') p.openBracket(2, true) else {
                     p.pos += 1;
                 },
                 ']' => p.closeBracket(),
                 '<' => p.angle(),
+                'w', 'h', 'f' => if (p.document.extensions.autolinks) p.bareUrl() else {
+                    p.pos += 1;
+                },
                 '&' => if (reference.at(s, p.pos)) |r| {
                     _ = p.add(p.pos, r.end, .reference, r.first, r.second);
                 } else {
@@ -324,6 +376,77 @@ const Parser = struct {
         }
         p.flush(s.len);
         delimiters.process(&p.delimiters, &p.leaf.list, delimiters.none);
+        if (p.document.extensions.autolinks) p.emails();
+    }
+
+    /// GFM's extended e-mail autolinks, found as cmark-gfm finds them: in
+    /// the text emphasis left, a run of text items outside any link at a
+    /// time. A run with an address becomes one text item, split around it.
+    fn emails(p: *Parser) void {
+        const list = &p.leaf.list;
+        var inside: usize = 0;
+        var at = list.head;
+        while (at != none) {
+            const it = list.items[at];
+            switch (it.kind) {
+                .link_open => if (!p.records[it.a].image) {
+                    inside += 1;
+                },
+                .link_close => if (!p.records[it.a].image) {
+                    inside -= 1;
+                },
+                else => {},
+            }
+            if (!it.textual() or inside != 0) {
+                at = it.next;
+                continue;
+            }
+            // The run: text items that touch, on one line.
+            var last = at;
+            while (list.items[last].next != none and list.items[list.items[last].next].textual() and list.items[list.items[last].next].start == list.items[last].end) last = list.items[last].next;
+            const start = it.start;
+            const end = list.items[last].end;
+            const after = list.items[last].next;
+            if (std.mem.findScalar(u8, p.s[start..end], '@') != null) {
+                // One text item for the run, the others emptied at its end.
+                var other = it.next;
+                while (other != after) : (other = list.items[other].next) {
+                    list.items[other] = .{ .start = @intCast(end), .end = @intCast(end), .prev = list.items[other].prev, .next = list.items[other].next, .kind = .text };
+                }
+                list.items[at].kind = .text;
+                list.items[at].end = @intCast(end);
+                p.splitEmails(at, end);
+            }
+            at = after;
+        }
+    }
+
+    /// The text item `at`, up to `end`, split around each address in it.
+    fn splitEmails(p: *Parser, first: u32, end: u32) void {
+        const list = &p.leaf.list;
+        var at = first;
+        var scan: usize = list.items[at].start;
+        while (std.mem.findScalarPos(u8, p.s[0..end], scan, '@')) |sign| {
+            const from = list.items[at].start;
+            const f = extended.email(p.s[0..end], from, sign) orelse {
+                scan = sign + 1;
+                continue;
+            };
+            const leaf = p.leaf;
+            const r = p.record(.{
+                .link = .{ .kind = .email, .destination = leaf.spanOf(f.start, f.end) },
+                .image = false,
+                .span = leaf.spanOf(f.start, f.end),
+                .bare = true,
+            }, 0);
+            // [from, start) text, the link of [start, end), then [end, ..) text.
+            list.items[at].end = @intCast(f.start);
+            const open = list.insertAfter(at, .{ .start = @intCast(f.start), .end = @intCast(f.start), .kind = .link_open, .a = r });
+            const text = list.insertAfter(open, .{ .start = @intCast(f.start), .end = @intCast(f.end), .kind = .text });
+            const close = list.insertAfter(text, .{ .start = @intCast(f.end), .end = @intCast(f.end), .kind = .link_close, .a = r });
+            at = list.insertAfter(close, .{ .start = @intCast(f.end), .end = end, .kind = .text });
+            scan = f.end;
+        }
     }
 
     /// Past the spaces and tabs that start the next line.
@@ -374,6 +497,11 @@ const Parser = struct {
         const start = p.pos;
         var end = start;
         while (end < s.len and s[end] == c) end += 1;
+        // GFM's strikethrough takes one tilde or two; more are text.
+        if (c == '~' and end - start > 2) {
+            p.pos = end;
+            return;
+        }
         const f = delimiters.classify(s, start, end, c);
         const at = p.add(start, end, .delimiter, c, 0);
         if (f.can_open or f.can_close) p.delimiters.push(.{
@@ -462,7 +590,13 @@ const Parser = struct {
         }, reproduced);
         leaf.list.items[opener.item].kind = .link_open;
         leaf.list.items[opener.item].a = r;
-        _ = p.add(close, end, .link_close, r, 0);
+        const closing = p.add(close, end, .link_close, r, 0);
+        // No link holds another: the bare links read in its text are text.
+        var at = leaf.list.items[opener.item].next;
+        while (at != closing) : (at = leaf.list.items[at].next) {
+            const it = &leaf.list.items[at];
+            if ((it.kind == .link_open or it.kind == .link_close) and p.records[it.a].bare) it.kind = .text;
+        }
         delimiters.process(&p.delimiters, &leaf.list, opener.delimiters);
         p.brackets.pop();
         if (!opener.image) p.brackets.deactivate();
@@ -478,6 +612,25 @@ const Parser = struct {
             if (p.expansion.used > p.expansion.limit) p.records[at].over = true;
         }
         return at;
+    }
+
+    fn bareUrl(p: *Parser) void {
+        if (extended.url(p.s, p.pos)) |f| p.bare(f) else p.pos += 1;
+    }
+
+    /// A GFM extended autolink: its text, between an opening and a closing
+    /// item of no bytes.
+    fn bare(p: *Parser, f: extended.Found) void {
+        const leaf = p.leaf;
+        const r = p.record(.{
+            .link = .{ .kind = if (f.email) .email else .extended, .destination = leaf.spanOf(f.start, f.end) },
+            .image = false,
+            .span = leaf.spanOf(f.start, f.end),
+            .bare = true,
+        }, 0);
+        _ = p.add(f.start, f.start, .link_open, r, 0);
+        _ = p.add(f.start, f.end, .text, 0, 0);
+        _ = p.add(f.end, f.end, .link_close, r, 0);
     }
 
     /// A `<`: an autolink, raw HTML, or text.

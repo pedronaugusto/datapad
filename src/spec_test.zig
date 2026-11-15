@@ -1,27 +1,34 @@
-//! CommonMark 0.31.2's examples, read from the spec as it is published
-//! (testdata/commonmark/spec.txt): each one's Markdown parsed, its events
-//! written as HTML with raw HTML allowed, and compared with the spec's HTML
-//! byte for byte.
+//! CommonMark 0.31.2's examples and GFM 0.29's extension examples, read
+//! from the specs as they are published (testdata/commonmark,
+//! testdata/gfm): each one's Markdown parsed, its events written as HTML
+//! with raw HTML allowed, and compared with the spec's HTML byte for byte.
 const std = @import("std");
 const Document = @import("Document.zig");
 const Events = @import("Events.zig");
 const html = @import("html.zig");
 
 const spec = @embedFile("commonmark_spec");
+const gfm_spec = @embedFile("gfm_spec");
 
 const fence = "````````````````````````````````";
 
 const Example = struct { number: usize, markdown: []const u8, html: []const u8 };
 
-/// The spec's examples, in order, with each `→` a tab, as the spec
-/// writes tabs.
-fn examples(gpa: std.mem.Allocator) !std.ArrayList(Example) {
+/// A spec's examples whose tag is one of `tags` (`""` for an untagged
+/// one), in order, numbered among all of the spec's examples, with each
+/// `→` a tab, as the specs write tabs.
+fn examples(gpa: std.mem.Allocator, text: []const u8, tags: []const []const u8) !std.ArrayList(Example) {
     var list: std.ArrayList(Example) = .empty;
-    var lines = std.mem.splitScalar(u8, spec, '\n');
+    var lines = std.mem.splitScalar(u8, text, '\n');
     var number: usize = 0;
     while (lines.next()) |line| {
-        if (!std.mem.eql(u8, line, fence ++ " example")) continue;
+        if (!std.mem.startsWith(u8, line, fence ++ " example")) continue;
         number += 1;
+        const tag = std.mem.trim(u8, line[fence.len + " example".len ..], " ");
+        const wanted = for (tags) |t| {
+            if (std.mem.eql(u8, t, tag)) break true;
+        } else false;
+        if (!wanted) continue;
         var markdown: std.ArrayList(u8) = .empty;
         var out: std.ArrayList(u8) = .empty;
         var into = &markdown;
@@ -49,8 +56,8 @@ fn appendTabs(gpa: std.mem.Allocator, to: *std.ArrayList(u8), line: []const u8) 
     }
 }
 
-fn render(gpa: std.mem.Allocator, markdown: []const u8) ![]u8 {
-    var document = try Document.parse(gpa, .init(markdown), .{ .extensions = .commonmark });
+fn render(gpa: std.mem.Allocator, markdown: []const u8, extensions: @import("Options.zig").Extensions) ![]u8 {
+    var document = try Document.parse(gpa, .init(markdown), .{ .extensions = extensions });
     defer document.deinit();
     var events = try Events.init(gpa, &document);
     defer events.deinit();
@@ -64,16 +71,30 @@ test "every CommonMark 0.31.2 example gives the spec's HTML" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const all = try examples(a);
+    const all = try examples(a, spec, &.{""});
     try std.testing.expectEqual(652, all.items.len);
+    try expectAll(a, all.items, .commonmark);
+}
+
+test "every GFM 0.29 extension example gives the spec's HTML" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // Task list items' examples are tagged `disabled`, as cmark-gfm's runner skips them.
+    const all = try examples(a, gfm_spec, &.{ "table", "disabled", "strikethrough", "autolink", "tagfilter" });
+    try std.testing.expectEqual(24, all.items.len);
+    try expectAll(a, all.items, .gfm);
+}
+
+fn expectAll(a: std.mem.Allocator, all: []const Example, extensions: @import("Options.zig").Extensions) !void {
     var failed: usize = 0;
-    for (all.items) |e| {
-        const got = try render(a, e.markdown);
+    for (all) |e| {
+        const got = try render(a, e.markdown, extensions);
         if (std.mem.eql(u8, got, e.html)) continue;
         failed += 1;
         if (failed <= 30) std.log.err("example {d}:\n{s}--- want\n{s}--- got\n{s}", .{ e.number, e.markdown, e.html, got });
     }
-    if (failed != 0) std.log.err("{d} of {d} examples differ", .{ failed, all.items.len });
+    if (failed != 0) std.log.err("{d} of {d} examples differ", .{ failed, all.len });
     try std.testing.expectEqual(0, failed);
 }
 

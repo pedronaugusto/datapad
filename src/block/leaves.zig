@@ -211,7 +211,96 @@ fn isTagSpace(c: u8) bool {
     return c == ' ' or c == '\t' or c == '\n' or c == '\r' or c == 0x0C;
 }
 
+/// A table cell's bytes in its row (GFM), spaces and tabs trimmed.
+pub const Cell = struct { start: usize, end: usize };
+
+/// The cells of a table row (GFM): split at each pipe no backslash
+/// escapes, a leading and a trailing pipe taken off, each cell trimmed.
+pub const Cells = struct {
+    row: []const u8,
+    at: usize,
+    end: usize,
+    done: bool = false,
+
+    pub fn init(row: []const u8) Cells {
+        var start: usize = 0;
+        var end = row.len;
+        while (start < end and chars.isSpaceOrTab(row[start])) start += 1;
+        while (end > start and chars.isSpaceOrTab(row[end - 1])) end -= 1;
+        if (start < end and row[start] == '|') start += 1;
+        if (end > start and row[end - 1] == '|' and !escaped(row, end - 1)) end -= 1;
+        return .{ .row = row, .at = start, .end = end };
+    }
+
+    pub fn next(c: *Cells) ?Cell {
+        if (c.done) return null;
+        var i = c.at;
+        while (i < c.end) : (i += 1) {
+            if (c.row[i] == '\\') {
+                i += 1;
+                continue;
+            }
+            if (c.row[i] == '|') break;
+        }
+        const pipe = @min(i, c.end);
+        var start = c.at;
+        var end = pipe;
+        while (start < end and chars.isSpaceOrTab(c.row[start])) start += 1;
+        while (end > start and chars.isSpaceOrTab(c.row[end - 1])) end -= 1;
+        if (pipe >= c.end) c.done = true else c.at = pipe + 1;
+        return .{ .start = start, .end = end };
+    }
+
+    /// How many cells the row has.
+    pub fn count(row: []const u8) usize {
+        var c: Cells = .init(row);
+        var n: usize = 0;
+        while (c.next()) |_| n += 1;
+        return n;
+    }
+};
+
+/// Whether the byte at `i` follows an odd run of backslashes.
+fn escaped(s: []const u8, i: usize) bool {
+    var n: usize = 0;
+    while (n < i and s[i - 1 - n] == '\\') n += 1;
+    return n % 2 == 1;
+}
+
+/// A table's delimiter row (GFM): cells of hyphens, each with a colon
+/// before or after or both, at least one pipe in the row. Its cell count.
+pub fn delimiterRow(row: []const u8) ?usize {
+    if (std.mem.findScalar(u8, row, '|') == null) return null;
+    var cells: Cells = .init(row);
+    var n: usize = 0;
+    while (cells.next()) |cell| {
+        var body = row[cell.start..cell.end];
+        if (body.len != 0 and body[0] == ':') body = body[1..];
+        if (body.len != 0 and body[body.len - 1] == ':') body = body[0 .. body.len - 1];
+        if (body.len == 0) return null;
+        for (body) |c| if (c != '-') return null;
+        n += 1;
+    }
+    return if (n == 0) null else n;
+}
+
 const testing = std.testing;
+
+test "a table row's cells and a delimiter row" {
+    const row = "| a | b\\|c |  `x` |";
+    var cells: Cells = .init(row);
+    try testing.expectEqualStrings("a", row[cells.next().?.start..][0..1]);
+    const second = cells.next().?;
+    try testing.expectEqualStrings("b\\|c", row[second.start..second.end]);
+    const third = cells.next().?;
+    try testing.expectEqualStrings("`x`", row[third.start..third.end]);
+    try testing.expectEqual(null, cells.next());
+    try testing.expectEqual(2, Cells.count("abc | def"));
+    try testing.expectEqual(2, delimiterRow(":-: | -----------:"));
+    try testing.expectEqual(1, delimiterRow("| ------ |"));
+    try testing.expectEqual(null, delimiterRow("---"));
+    try testing.expectEqual(null, delimiterRow("| -x- |"));
+}
 
 test "the block starts each recognizer reads" {
     try testing.expect(thematicBreak("***"));

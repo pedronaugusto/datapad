@@ -14,6 +14,9 @@ pub const Kind = enum(u8) {
     thematic_break,
     code_block,
     html_block,
+    /// GFM's table: its lines are its header row, its delimiter row and its
+    /// body rows.
+    table,
 };
 
 /// A heading's level, `#` to `######`.
@@ -43,6 +46,8 @@ pub const Data = union(enum) {
     /// none, and for an indented block.
     code: struct { fenced: bool, info: Span },
     html: HtmlKind,
+    /// A table's columns: its delimiter row's cells.
+    table: u32,
 };
 
 /// A content line: where its content lies, and how many columns of a tab a

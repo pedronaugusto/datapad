@@ -15,6 +15,7 @@ const Document = @import("Document.zig");
 const Block = @import("block/Block.zig");
 const event = @import("event.zig");
 const Leaf = @import("inline.zig").Leaf;
+const leaves = @import("block.zig").leaves;
 
 pub const Event = event.Event;
 pub const Node = event.Node;
@@ -36,6 +37,15 @@ state: State = .blocks,
 /// given yet.
 line: u32 = 0,
 spaced: bool = false,
+/// In a table: the row being given out (a line index), what of it, the
+/// column, the row's cells and the delimiter row's, and the cell open.
+row: u32 = 0,
+part: TablePart = .head_enter,
+column: u32 = 0,
+cells: leaves.Cells = undefined,
+aligns: leaves.Cells = undefined,
+cell: Node = .{ .table_cell = .none },
+cell_span: Span = .init(0, 0),
 scratch: []align(Leaf.Memory.alignment) u8,
 leaf: Leaf = .empty,
 expansion: Leaf.Expansion,
@@ -43,7 +53,10 @@ failed: bool = false,
 
 /// What `next` gives out next: blocks, a leaf's inlines, a code or HTML
 /// block's lines, or the leaf's exit.
-pub const State = enum { blocks, inlines, lines, exit_leaf };
+pub const State = enum { blocks, inlines, lines, exit_leaf, table };
+
+/// Where in a table `next` is.
+pub const TablePart = enum { head_enter, row_enter, cell_enter, cell_inlines, cell_exit, row_exit, head_exit, table_exit };
 
 /// The containers open, by block index, as deep as the document nests.
 const Stack = aegis.parts.Block(struct { stack: []u32 });
@@ -143,6 +156,93 @@ fn nodeOf(b: Block) Node {
         },
         .html_block => .html_block,
         .thematic_break => aegis.assert.never("a thematic break is one event"),
+        .table => .table,
+    };
+}
+
+/// A cell's alignment, from its column's cell in the delimiter row.
+fn alignment(cell: []const u8) event.Alignment {
+    const left = cell.len != 0 and cell[0] == ':';
+    const right = cell.len != 0 and cell[cell.len - 1] == ':';
+    if (left and right) return .center;
+    if (left) return .left;
+    if (right) return .right;
+    return .none;
+}
+
+/// The next event of a GFM table: its head row, then its body rows, each a
+/// row of exactly as many cells as the table has columns (an empty one for
+/// each the row lacks, none for those past them); the delimiter row gives
+/// the alignments and no row.
+fn tableStep(e: *Events) error{ExpansionTooLarge}!Event {
+    const text = e.document.text();
+    const b = e.document.blocks()[e.current];
+    const lines = e.document.lines(b);
+    const columns = b.data.table;
+    while (true) switch (e.part) {
+        .head_enter => {
+            e.part = .row_enter;
+            return .{ .span = .init(lines[0].start, lines[0].end), .kind = .{ .enter = .table_head } };
+        },
+        .row_enter => {
+            if (e.row >= lines.len) {
+                e.part = .table_exit;
+                continue;
+            }
+            const l = lines[e.row];
+            e.cells = .init(l.of(text));
+            e.aligns = .init(lines[1].of(text));
+            e.column = 0;
+            e.part = .cell_enter;
+            return .{ .span = .init(l.start, l.end), .kind = .{ .enter = .table_row } };
+        },
+        .cell_enter => {
+            if (e.column >= columns) {
+                e.part = .row_exit;
+                continue;
+            }
+            const l = lines[e.row];
+            const delimiter = e.aligns.next() orelse aegis.assert.never("the delimiter row has a cell for each column");
+            e.cell = .{ .table_cell = alignment(lines[1].of(text)[delimiter.start..delimiter.end]) };
+            if (e.cells.next()) |c| {
+                const line: [1]Block.Line = .{.{ .start = l.start + @as(u32, @intCast(c.start)), .end = l.start + @as(u32, @intCast(c.end)) }};
+                const block = Leaf.Memory.plan(Leaf.counts(c.end - c.start + 1)).fit(e.scratch) catch aegis.assert.never("the scratch is sized for the largest leaf");
+                e.leaf = Leaf.read(block, e.document, &line, &e.expansion, false);
+                e.cell_span = .init(line[0].start, line[0].end);
+            } else {
+                // A cell the row lacks: empty, at the row's end.
+                e.leaf = .empty;
+                e.cell_span = .init(l.end, l.end);
+            }
+            e.part = .cell_inlines;
+            return .{ .span = e.cell_span, .kind = .{ .enter = e.cell } };
+        },
+        .cell_inlines => {
+            if (try e.leaf.next()) |ev| return ev;
+            e.leaf.part_count = 0;
+            e.part = .cell_exit;
+        },
+        .cell_exit => {
+            e.column += 1;
+            e.part = .cell_enter;
+            return .{ .span = e.cell_span, .kind = .{ .exit = e.cell } };
+        },
+        .row_exit => {
+            const l = lines[e.row];
+            const head = e.row == 0;
+            // The delimiter row, line 1, is no row.
+            e.row += if (head) 2 else 1;
+            e.part = if (head) .head_exit else .row_enter;
+            return .{ .span = .init(l.start, l.end), .kind = .{ .exit = .table_row } };
+        },
+        .head_exit => {
+            e.part = .row_enter;
+            return .{ .span = .init(lines[0].start, lines[0].end), .kind = .{ .exit = .table_head } };
+        },
+        .table_exit => {
+            e.state = .blocks;
+            return .{ .span = b.span, .kind = .{ .exit = .table } };
+        },
     };
 }
 
@@ -170,6 +270,7 @@ fn step(e: *Events) error{ExpansionTooLarge}!?Event {
             const span: Span = .init(l.start, l.end);
             return .{ .span = span, .kind = if (b.kind == .code_block) .text else .{ .html = span } };
         },
+        .table => return try e.tableStep(),
         .exit_leaf => {
             e.state = .blocks;
             // A leaf's links are refused once it is left.
@@ -201,8 +302,16 @@ fn step(e: *Events) error{ExpansionTooLarge}!?Event {
                     var bytes: usize = 0;
                     for (lines) |l| bytes += l.end - l.start + 1;
                     const block = Leaf.Memory.plan(Leaf.counts(bytes)).fit(e.scratch) catch aegis.assert.never("the scratch is sized for the largest leaf");
-                    e.leaf = Leaf.read(block, e.document, lines, &e.expansion);
+                    // A list item's first block, where GFM reads a task marker.
+                    const item_start = at > 0 and blocks[at - 1].kind == .item and b.depth == blocks[at - 1].depth + 1;
+                    e.leaf = Leaf.read(block, e.document, lines, &e.expansion, item_start);
                     e.state = .inlines;
+                },
+                .table => {
+                    e.current = at;
+                    e.row = 0;
+                    e.part = .head_enter;
+                    e.state = .table;
                 },
                 .code_block, .html_block => {
                     e.current = at;

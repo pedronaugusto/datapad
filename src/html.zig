@@ -45,6 +45,10 @@ const State = struct {
     joining_code: bool = false,
     in_code_block: bool = false,
     in_html_block: bool = false,
+    /// In a GFM table: its head, whether its body was opened, a cell.
+    in_head: bool = false,
+    in_body: bool = false,
+    in_cell: bool = false,
 
     fn put(s: *State, bytes: []const u8) Writer.Error!void {
         if (bytes.len == 0) return;
@@ -56,6 +60,23 @@ const State = struct {
     /// A line ending unless one was just written.
     fn cr(s: *State) Writer.Error!void {
         if (s.started and !s.at_line_start) try s.put("\n");
+    }
+
+    /// Raw HTML as it is, but with GFM's tagfilter the `<` of a
+    /// disallowed tag written as `&lt;`.
+    fn raw(s: *State, bytes: []const u8) Writer.Error!void {
+        if (bytes.len == 0) return;
+        if (!s.document.extensions.tagfilter) return s.put(bytes);
+        var run: usize = 0;
+        for (bytes, 0..) |c, at| {
+            if (c != '<' or !disallowed(bytes[at..])) continue;
+            try s.w.writeAll(bytes[run..at]);
+            try s.w.writeAll("&lt;");
+            run = at + 1;
+        }
+        try s.w.writeAll(bytes[run..]);
+        s.started = true;
+        s.at_line_start = bytes[bytes.len - 1] == '\n';
     }
 
     fn text(s: *State, bytes: []const u8) Writer.Error!void {
@@ -111,12 +132,13 @@ pub fn write(w: *Writer, events: *Events, options: Options) Error!void {
                     s.joining = e.span;
                     s.joining_code = true;
                 }
-                try s.text(piece.of(text));
+                // In a table cell, GFM reads `\|` as a pipe, code spans included.
+                if (s.in_cell) try cellCode(&s, piece.of(text)) else try s.text(piece.of(text));
             },
             .html => |piece| {
                 if (s.in_html_block) {
                     if (s.options.unsafe) {
-                        try s.put(piece.of(text));
+                        try s.raw(piece.of(text));
                         try s.put("\n");
                     }
                     continue;
@@ -126,7 +148,7 @@ pub fn write(w: *Writer, events: *Events, options: Options) Error!void {
                     try s.text(piece.of(text));
                 } else if (s.options.unsafe) {
                     if (piece_of_joined) try s.put("\n");
-                    try s.put(piece.of(text));
+                    try s.raw(piece.of(text));
                 } else if (!piece_of_joined) try s.put("<!-- raw HTML omitted -->");
                 s.joining = e.span;
                 s.joining_code = false;
@@ -141,8 +163,8 @@ pub fn write(w: *Writer, events: *Events, options: Options) Error!void {
                 try s.cr();
                 try s.put("<hr />\n");
             },
-            // Task list items are GFM's, written by a later writer.
-            .task => {},
+            // A task list item's marker, as GFM's spec writes it.
+            .task => |done| if (s.plain == 0) try s.put(if (done) "<input checked=\"\" disabled=\"\" type=\"checkbox\"> " else "<input disabled=\"\" type=\"checkbox\"> "),
         }
     }
     try s.endJoin();
@@ -219,6 +241,34 @@ fn enter(s: *State, e: Events.Event, n: Events.Node) Error!void {
         },
         .emphasis => try s.put("<em>"),
         .strong => try s.put("<strong>"),
+        .strikethrough => try s.put("<del>"),
+        .table => {
+            try s.cr();
+            try s.put("<table>\n");
+            s.in_body = false;
+        },
+        .table_head => {
+            try s.put("<thead>\n");
+            s.in_head = true;
+        },
+        .table_row => {
+            if (!s.in_head and !s.in_body) {
+                try s.put("<tbody>\n");
+                s.in_body = true;
+            }
+            try s.put("<tr>\n");
+        },
+        .table_cell => |a| {
+            try s.put(if (s.in_head) "<th" else "<td");
+            try s.put(switch (a) {
+                .none => "",
+                .left => " align=\"left\"",
+                .center => " align=\"center\"",
+                .right => " align=\"right\"",
+            });
+            try s.put(">");
+            s.in_cell = true;
+        },
         .link => |l| {
             try s.put("<a href=\"");
             try destination(s, l);
@@ -286,9 +336,57 @@ fn exit(s: *State, n: Events.Node) Error!void {
         },
         .emphasis => try s.put("</em>"),
         .strong => try s.put("</strong>"),
+        .strikethrough => try s.put("</del>"),
+        .table => {
+            if (s.in_body) try s.put("</tbody>\n");
+            try s.put("</table>\n");
+        },
+        .table_head => {
+            try s.put("</thead>\n");
+            s.in_head = false;
+        },
+        .table_row => try s.put("</tr>\n"),
+        .table_cell => {
+            try s.put(if (s.in_head) "</th>\n" else "</td>\n");
+            s.in_cell = false;
+        },
         .link => try s.put("</a>"),
         else => {},
     }
+}
+
+/// The tags GFM's tagfilter writes as text: they change how HTML around
+/// them is read.
+const disallowed_tags = [_][]const u8{ "title", "textarea", "style", "xmp", "iframe", "noembed", "noframes", "script", "plaintext" };
+
+/// Whether `at` (from a `<`) opens or closes a disallowed tag: its name,
+/// in any case, then whitespace, `>` or `/>`.
+fn disallowed(at: []const u8) bool {
+    var i: usize = 1;
+    if (i < at.len and at[i] == '/') i += 1;
+    for (disallowed_tags) |name| {
+        if (at.len < i + name.len or !std.ascii.eqlIgnoreCase(at[i..][0..name.len], name)) continue;
+        const rest = at[i + name.len ..];
+        if (rest.len == 0) return false;
+        return switch (rest[0]) {
+            ' ', '\t', '\n', '\r', 0x0C, '>' => true,
+            '/' => rest.len > 1 and rest[1] == '>',
+            else => false,
+        };
+    }
+    return false;
+}
+
+/// A code span's piece in a table cell: each `\|` a pipe.
+fn cellCode(s: *State, piece: []const u8) Writer.Error!void {
+    var run: usize = 0;
+    var at: usize = 0;
+    while (std.mem.findPos(u8, piece, at, "\\|")) |bs| {
+        try s.text(piece[run..bs]);
+        run = bs + 1;
+        at = bs + 2;
+    }
+    try s.text(piece[run..]);
 }
 
 /// Text escaped for HTML: `&`, `<`, `>` and `"` as references, U+0000 and
@@ -372,7 +470,8 @@ fn unescaped(w: *Writer, bytes: []const u8, sink: Sink) Writer.Error!void {
 /// URL it means.
 pub fn writeDestination(w: *Writer, document: *const Document, link: Events.Link) Writer.Error!void {
     if (link.kind == .email) try w.writeAll("mailto:");
-    if (link.kind == .autolink or link.kind == .email) return w.writeAll(link.destination.of(document.text()));
+    if (link.kind == .extended and std.mem.startsWith(u8, link.destination.of(document.text()), "www.")) try w.writeAll("http://");
+    if (link.kind == .autolink or link.kind == .email or link.kind == .extended) return w.writeAll(link.destination.of(document.text()));
     try unescaped(w, link.destination.of(document.text()), .html);
 }
 
@@ -423,7 +522,12 @@ fn destination(s: *State, l: Events.Link) Writer.Error!void {
             try s.put("mailto:");
             try escapeHref(s.w, raw);
         },
-        .autolink, .extended => try escapeHref(s.w, raw),
+        .autolink => try escapeHref(s.w, raw),
+        .extended => {
+            // A bare `www.` link is an HTTP link.
+            if (std.mem.startsWith(u8, raw, "www.")) try s.put("http://");
+            try escapeHref(s.w, raw);
+        },
         else => try unescaped(s.w, raw, .href),
     }
 }

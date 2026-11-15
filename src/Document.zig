@@ -18,6 +18,8 @@ pub const Reference = references.Reference;
 gpa: std.mem.Allocator,
 source: []const u8,
 tables: containers.Tables,
+/// The syntax it was parsed with, which the inline pass and the writer read too.
+extensions: Extensions,
 /// The limits it was parsed under: `Events` checks `expansion`.
 limits: Limits,
 /// Where `parse`, and `Events.next` at the expansion limit, say which
@@ -47,7 +49,8 @@ const Run = struct {
         return .{
             .gpa = r.gpa,
             .source = bytes,
-            .tables = try containers.run(r.gpa, bytes, r.options.limits, r.options.diagnostics),
+            .tables = try containers.run(r.gpa, bytes, r.options.extensions, r.options.limits, r.options.diagnostics),
+            .extensions = r.options.extensions,
             .limits = r.options.limits,
             .diagnostics = r.options.diagnostics,
         };

@@ -70,16 +70,31 @@ pub fn classify(s: []const u8, start: usize, end: usize, char: u8) Flanking {
     const punct_after = isPunctuation(after);
     const left = !space_after and (!punct_after or space_before or punct_before);
     const right = !space_before and (!punct_before or space_after or punct_after);
-    if (char == '*') return .{ .can_open = left, .can_close = right };
+    // `*` and GFM's `~` by flanking alone; `_` not inside a word.
+    if (char != '_') return .{ .can_open = left, .can_close = right };
     return .{
         .can_open = left and (!right or punct_before),
         .can_close = right and (!left or punct_after),
     };
 }
 
-/// One of the six `openers_bottom` keys for a closer.
+/// One of the `openers_bottom` keys for a closer: six for each of `*`
+/// and `_` (whether it can open, its length mod 3), four for `~` (whether
+/// it can open, its length, one or two).
 fn key(d: Delimiter) usize {
+    if (d.char == '~') return 12 + @as(usize, @intFromBool(d.can_open)) * 2 + (d.length - 1);
     return @as(usize, @intFromBool(d.char == '_')) * 6 + @as(usize, @intFromBool(d.can_open)) * 3 + d.length % 3;
+}
+
+/// Whether `o` can open what the closer `c` closes: the same character;
+/// for `~`, the same length (GFM's strikethrough); for `*` and `_`, not
+/// both lengths' sum a multiple of 3 when either can both open and close,
+/// unless both are (§6.2's rule of 3).
+fn opens(o: Delimiter, c: Delimiter) bool {
+    if (!o.can_open or o.char != c.char) return false;
+    if (c.char == '~') return o.length == c.length;
+    const both = o.can_close or c.can_open;
+    return !(both and (o.length + c.length) % 3 == 0 and !(o.length % 3 == 0 and c.length % 3 == 0));
 }
 
 /// Matches the delimiters above `bottom` (an entry, or `none` for the
@@ -87,7 +102,7 @@ fn key(d: Delimiter) usize {
 /// takes every delimiter above `bottom` off the stack: what no match took
 /// stays in its run's item as text.
 pub fn process(stack: *Stack, list: *items.List, bottom: u32) void {
-    var openers_bottom: [12]u32 = @splat(bottom);
+    var openers_bottom: [16]u32 = @splat(bottom);
     // The first delimiter above the bottom.
     if (stack.top == none or stack.top == bottom) return;
     var closer = stack.top;
@@ -103,13 +118,9 @@ pub fn process(stack: *Stack, list: *items.List, bottom: u32) void {
         var found = false;
         while (opener != none and opener != bottom and opener != openers_bottom[k]) {
             const o = stack.entries[opener];
-            if (o.can_open and o.char == c.char) {
-                const both = o.can_close or c.can_open;
-                const odd = both and (o.length + c.length) % 3 == 0 and !(o.length % 3 == 0 and c.length % 3 == 0);
-                if (!odd) {
-                    found = true;
-                    break;
-                }
+            if (opens(o, c)) {
+                found = true;
+                break;
             }
             opener = o.prev;
         }
@@ -135,14 +146,17 @@ fn match(stack: *Stack, list: *items.List, opener: u32, closer: u32) u32 {
     const close_item = stack.entries[closer].item;
     const o = list.items[open_item];
     const c = list.items[close_item];
-    const use: u32 = if (o.end - o.start >= 2 and c.end - c.start >= 2) 2 else 1;
-    const strong = use == 2;
+    // A strikethrough takes its runs whole; emphasis two characters when
+    // both runs have them, else one.
+    const strike = stack.entries[closer].char == '~';
+    const use: u32 = if (strike) c.end - c.start else if (o.end - o.start >= 2 and c.end - c.start >= 2) 2 else 1;
+    const kinds: [2]items.Kind = if (strike) .{ .strike_open, .strike_close } else if (use == 2) .{ .strong_open, .strong_close } else .{ .emphasis_open, .emphasis_close };
     list.items[open_item].end -= use;
     const opened_at = list.items[open_item].end;
-    const opening = list.insertAfter(open_item, .{ .start = opened_at, .end = opened_at + use, .kind = if (strong) .strong_open else .emphasis_open });
+    const opening = list.insertAfter(open_item, .{ .start = opened_at, .end = opened_at + use, .kind = kinds[0] });
     const closed_at = list.items[close_item].start;
     list.items[close_item].start += use;
-    const closing = list.insertBefore(close_item, .{ .start = closed_at, .end = closed_at + use, .kind = if (strong) .strong_close else .emphasis_close });
+    const closing = list.insertBefore(close_item, .{ .start = closed_at, .end = closed_at + use, .kind = kinds[1] });
     list.items[opening].a = closing;
     list.items[closing].a = opening;
     // The delimiters between the two can no longer match anything.

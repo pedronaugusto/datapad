@@ -7,6 +7,7 @@ pub const code = @import("inline/code.zig");
 pub const html = @import("inline/html.zig");
 pub const autolink = @import("inline/autolink.zig");
 pub const reference = @import("inline/reference.zig");
+pub const extended = @import("inline/extended.zig");
 pub const delimiters = @import("inline/delimiters.zig");
 pub const links = @import("inline/links.zig");
 pub const Leaf = @import("inline/Leaf.zig");
@@ -17,6 +18,7 @@ test {
     _ = html;
     _ = autolink;
     _ = reference;
+    _ = extended;
     _ = delimiters;
     _ = links;
     _ = Leaf;

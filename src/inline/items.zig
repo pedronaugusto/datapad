@@ -26,8 +26,8 @@ pub const Kind = enum(u8) {
     /// A line ending after two spaces or a backslash, with them and the
     /// spaces after it.
     hard_break,
-    /// A run of `*` or `_` (`a` is the character), the characters no match
-    /// took: text.
+    /// A run of `*`, `_` or `~` (`a` is the character), the characters no
+    /// match took: text.
     delimiter,
     /// A `[` or `![` no link took: text.
     bracket,
@@ -37,6 +37,9 @@ pub const Kind = enum(u8) {
     emphasis_close,
     strong_open,
     strong_close,
+    /// GFM's strikethrough's delimiters, as emphasis's.
+    strike_open,
+    strike_close,
     /// A link's or an image's opening and closing syntax: `a` is its
     /// record.
     link_open,
