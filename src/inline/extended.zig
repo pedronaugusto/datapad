@@ -29,13 +29,16 @@ fn hostByte(c: u8) bool {
 /// Where the domain from `s[from]` ends: segments of host bytes split by
 /// periods, with no underscore in its last two; at least one period unless
 /// `short` allows none. Null where there is none.
-fn domain(s: []const u8, from: usize, short: bool) ?usize {
+fn domain(s: []const u8, from: usize, short: bool, work: *u64) ?usize {
     var i = from;
     var periods: usize = 0;
     // Underscores in the segment before the last, and in the last.
     var before: usize = 0;
     var last: usize = 0;
-    while (i < s.len) : (i += 1) {
+    while (i < s.len) : ({
+        i += 1;
+        work.* += 1;
+    }) {
         const c = s[i];
         if (c == '.') {
             // A period ends the domain unless a segment follows it.
@@ -55,26 +58,35 @@ fn domain(s: []const u8, from: usize, short: bool) ?usize {
 /// `end` moved back past what ends a link but is not its: trailing
 /// punctuation, a `)` the link opened no `(` for, and a trailing entity
 /// reference's `&name;`.
-fn trim(s: []const u8, start: usize, end_in: usize) usize {
+fn trim(s: []const u8, start: usize, end_in: usize, work: *u64) usize {
     var end = end_in;
+    // The link's parentheses, counted once when a `)` is first met: trimming
+    // takes off only `)` of them, so `closing` goes down by one for each.
+    var counted = false;
+    var opening: usize = 0;
+    var closing: usize = 0;
     while (end > start) {
+        work.* += 1;
         const c = s[end - 1];
         if (std.mem.findScalar(u8, "?!.,:*_~'\"", c) != null) {
             end -= 1;
         } else if (c == ';') {
             var amp = end - 1;
-            while (amp > start and std.ascii.isAlphanumeric(s[amp - 1])) amp -= 1;
+            while (amp > start and std.ascii.isAlphanumeric(s[amp - 1])) : (work.* += 1) amp -= 1;
             if (amp > start and amp < end - 1 and s[amp - 1] == '&') {
                 end = amp - 1;
             } else break;
         } else if (c == ')') {
-            var opening: usize = 0;
-            var closing: usize = 0;
-            for (s[start..end]) |b| {
-                if (b == '(') opening += 1;
-                if (b == ')') closing += 1;
+            if (!counted) {
+                for (s[start..end]) |b| {
+                    work.* += 1;
+                    if (b == '(') opening += 1;
+                    if (b == ')') closing += 1;
+                }
+                counted = true;
             }
             if (closing <= opening) break;
+            closing -= 1;
             end -= 1;
         } else break;
     }
@@ -82,17 +94,17 @@ fn trim(s: []const u8, start: usize, end_in: usize) usize {
 }
 
 /// The `www.` or URL link starting at `s[at]`, or null.
-pub fn url(s: []const u8, at: usize) ?Found {
+pub fn url(s: []const u8, at: usize, work: *u64) ?Found {
     if (!boundary(s, at)) return null;
     const rest = s[at..];
     const www = std.mem.startsWith(u8, rest, "www.");
     const scheme: usize = if (www) 0 else for ([_][]const u8{ "http://", "https://", "ftp://" }) |prefix| {
         if (std.mem.startsWith(u8, rest, prefix)) break prefix.len;
     } else return null;
-    const host_end = domain(s, at + scheme, !www) orelse return null;
+    const host_end = domain(s, at + scheme, !www, work) orelse return null;
     var end = host_end;
-    while (end < s.len and !(s[end] == ' ' or s[end] == '\t' or s[end] == '\n' or s[end] == '<')) end += 1;
-    end = trim(s, at, end);
+    while (end < s.len and !(s[end] == ' ' or s[end] == '\t' or s[end] == '\n' or s[end] == '<')) : (work.* += 1) end += 1;
+    end = trim(s, at, end, work);
     if (end <= at + scheme) return null;
     return .{ .start = at, .end = end, .email = false };
 }
@@ -103,13 +115,16 @@ fn localByte(c: u8) bool {
 
 /// The e-mail address around the `@` at `s[at]`, its local part read back
 /// no further than `from`, or null.
-pub fn email(s: []const u8, from: usize, at: usize) ?Found {
+pub fn email(s: []const u8, from: usize, at: usize, work: *u64) ?Found {
     var start = at;
-    while (start > from and localByte(s[start - 1])) start -= 1;
+    while (start > from and localByte(s[start - 1])) : (work.* += 1) start -= 1;
     if (start == at) return null;
     var end = at + 1;
     var periods: usize = 0;
-    while (end < s.len) : (end += 1) {
+    while (end < s.len) : ({
+        end += 1;
+        work.* += 1;
+    }) {
         const c = s[end];
         if (std.ascii.isAlphanumeric(c) or c == '-' or c == '_') continue;
         if (c == '.' and end + 1 < s.len and std.ascii.isAlphanumeric(s[end + 1])) {
@@ -121,7 +136,7 @@ pub fn email(s: []const u8, from: usize, at: usize) ?Found {
     if (end < at + 2 or periods == 0) return null;
     const last = s[end - 1];
     if (!std.ascii.isAlphanumeric(last) and last != '.') return null;
-    end = trim(s, start, end);
+    end = trim(s, start, end, work);
     return .{ .start = start, .end = end, .email = true };
 }
 
@@ -129,11 +144,13 @@ const testing = std.testing;
 
 fn expectUrl(s: []const u8, link: ?[]const u8) !void {
     const at = std.mem.find(u8, s, "www.") orelse std.mem.find(u8, s, "http") orelse std.mem.find(u8, s, "ftp").?;
-    const f = url(s, at);
+    var work: u64 = 0;
+    const f = url(s, at, &work);
     if (link) |l| try testing.expectEqualStrings(l, s[f.?.start..f.?.end]) else try testing.expectEqual(null, f);
 }
 
 test "www and URL links, trimmed as GFM trims them" {
+    var work: u64 = 0;
     try expectUrl("www.commonmark.org", "www.commonmark.org");
     try expectUrl("www.commonmark.org.", "www.commonmark.org");
     try expectUrl("www.commonmark.org/a.b.", "www.commonmark.org/a.b");
@@ -144,7 +161,7 @@ test "www and URL links, trimmed as GFM trims them" {
     try expectUrl("www.a_b.c_d", null);
     try expectUrl("https://encrypted.google.com/x", "https://encrypted.google.com/x");
     try expectUrl("ftp://foo.bar.baz.", "ftp://foo.bar.baz");
-    try testing.expectEqual(null, url("awww.a.b", 1));
+    try testing.expectEqual(null, url("awww.a.b", 1, &work));
 }
 
 test "e-mail addresses, read around their @" {
@@ -158,7 +175,8 @@ test "e-mail addresses, read around their @" {
         .{ "@a.b", null },
     };
     for (cases) |c| {
-        const f = email(c[0], 0, std.mem.findScalar(u8, c[0], '@').?);
+        var work: u64 = 0;
+        const f = email(c[0], 0, std.mem.findScalar(u8, c[0], '@').?, &work);
         if (c[1]) |l| try testing.expectEqualStrings(l, c[0][f.?.start..f.?.end]) else try testing.expectEqual(null, f);
     }
 }

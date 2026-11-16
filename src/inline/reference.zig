@@ -22,7 +22,7 @@ fn digit(c: u8, hex: bool) ?u32 {
 }
 
 /// The reference starting at `s[at]` (an `&`), or null.
-pub fn at(s: []const u8, start: usize) ?Found {
+pub fn at(s: []const u8, start: usize, work: *u64) ?Found {
     aegis.assert.invariant(s[start] == '&', "a reference starts at an `&`");
     var i = start + 1;
     if (i < s.len and s[i] == '#') {
@@ -32,7 +32,10 @@ pub fn at(s: []const u8, start: usize) ?Found {
         const digits = i;
         const most: usize = if (hex) 6 else 7;
         var value: u32 = 0;
-        while (i < s.len and i - digits < most) : (i += 1) {
+        while (i < s.len and i - digits < most) : ({
+            i += 1;
+            work.* += 1;
+        }) {
             const d = digit(s[i], hex) orelse break;
             value = value * (if (hex) @as(u32, 16) else 10) + d;
         }
@@ -42,7 +45,7 @@ pub fn at(s: []const u8, start: usize) ?Found {
         return .{ .first = cp, .second = 0, .end = i + 1 };
     }
     const name = i;
-    while (i < s.len and i - name <= entities.longest and std.ascii.isAlphanumeric(s[i])) i += 1;
+    while (i < s.len and i - name <= entities.longest and std.ascii.isAlphanumeric(s[i])) : (work.* += 1) i += 1;
     if (i == name or i >= s.len or s[i] != ';') return null;
     const e = entities.lookup(s[name..i]) orelse return null;
     return .{ .first = e.first, .second = e.second, .end = i + 1 };
@@ -51,13 +54,15 @@ pub fn at(s: []const u8, start: usize) ?Found {
 const testing = std.testing;
 
 fn expectReference(s: []const u8, first: u21, second: u21) !void {
-    const f = at(s, 0).?;
+    var work: u64 = 0;
+    const f = at(s, 0, &work).?;
     try testing.expectEqual(first, f.first);
     try testing.expectEqual(second, f.second);
     try testing.expectEqual(s.len, f.end);
 }
 
 test "references as §2.5 reads them" {
+    var work: u64 = 0;
     try expectReference("&nbsp;", 0xA0, 0);
     try expectReference("&ngE;", 0x2267, 0x338);
     try expectReference("&#35;", '#', 0);
@@ -67,12 +72,12 @@ test "references as §2.5 reads them" {
     try expectReference("&#XD06;", 0xD06, 0);
     try expectReference("&#xcab;", 0xCAB, 0);
     try expectReference("&#9999999;", 0xFFFD, 0);
-    try testing.expectEqual(null, at("&nbsp", 0));
-    try testing.expectEqual(null, at("&x;", 0));
-    try testing.expectEqual(null, at("&#87654321;", 0));
-    try testing.expectEqual(null, at("&#abcdef0;", 0));
-    try testing.expectEqual(null, at("&ThisIsNotDefined;", 0));
-    try testing.expectEqual(null, at("&hi?;", 0));
-    try testing.expectEqual(null, at("&#;", 0));
-    try testing.expectEqual(null, at("&;", 0));
+    try testing.expectEqual(null, at("&nbsp", 0, &work));
+    try testing.expectEqual(null, at("&x;", 0, &work));
+    try testing.expectEqual(null, at("&#87654321;", 0, &work));
+    try testing.expectEqual(null, at("&#abcdef0;", 0, &work));
+    try testing.expectEqual(null, at("&ThisIsNotDefined;", 0, &work));
+    try testing.expectEqual(null, at("&hi?;", 0, &work));
+    try testing.expectEqual(null, at("&#;", 0, &work));
+    try testing.expectEqual(null, at("&;", 0, &work));
 }

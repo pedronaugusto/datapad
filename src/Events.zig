@@ -50,6 +50,8 @@ scratch: []align(Leaf.Memory.alignment) u8,
 leaf: Leaf = .empty,
 expansion: Leaf.Expansion,
 failed: bool = false,
+/// The steps the inline pass has taken so far.
+inline_work: u64 = 0,
 
 /// What `next` gives out next: blocks, a leaf's inlines, a code or HTML
 /// block's lines, or the leaf's exit.
@@ -121,6 +123,15 @@ pub fn next(e: *Events) error{ExpansionTooLarge}!?Event {
         if (e.document.diagnostics) |d| d.* = .{ .offset = e.leaf.refused().start, .limit = .expansion };
         return err;
     };
+}
+
+/// The steps the inline pass has taken over the leaves given out so far:
+/// every byte and item it read, each scan's bytes included. With the block
+/// pass's (`Document.stats`), what the pathological tests hold to a bound
+/// per input byte, so a construct that rescans fails them where a timing
+/// would vary.
+pub fn work(e: *const Events) u64 {
+    return e.inline_work;
 }
 
 /// A link's title (an inline link's, or its definition's), while `next`
@@ -208,7 +219,7 @@ fn tableStep(e: *Events) error{ExpansionTooLarge}!Event {
             if (e.cells.next()) |c| {
                 const line: [1]Block.Line = .{.{ .start = l.start + @as(u32, @intCast(c.start)), .end = l.start + @as(u32, @intCast(c.end)) }};
                 const block = Leaf.Memory.plan(Leaf.counts(c.end - c.start + 1)).fit(e.scratch) catch aegis.assert.never("the scratch is sized for the largest leaf");
-                e.leaf = Leaf.read(block, e.document, &line, &e.expansion, false);
+                e.leaf = Leaf.read(block, e.document, &line, &e.expansion, false, &e.inline_work);
                 e.cell_span = .init(line[0].start, line[0].end);
             } else {
                 // A cell the row lacks: empty, at the row's end.
@@ -305,7 +316,7 @@ fn step(e: *Events) error{ExpansionTooLarge}!?Event {
                     const block = Leaf.Memory.plan(Leaf.counts(bytes)).fit(e.scratch) catch aegis.assert.never("the scratch is sized for the largest leaf");
                     // A list item's first block, where GFM reads a task marker.
                     const item_start = at > 0 and blocks[at - 1].kind == .item and b.depth == blocks[at - 1].depth + 1;
-                    e.leaf = Leaf.read(block, e.document, lines, &e.expansion, item_start);
+                    e.leaf = Leaf.read(block, e.document, lines, &e.expansion, item_start, &e.inline_work);
                     e.state = .inlines;
                 },
                 .table => {

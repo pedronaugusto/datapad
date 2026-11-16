@@ -9,4 +9,6 @@ test {
     _ = @import("inline/properties_test.zig");
     _ = @import("spec_test.zig");
     _ = @import("syntaxes_test.zig");
+    _ = @import("pathological_test.zig");
+    _ = @import("fuzz_test.zig");
 }

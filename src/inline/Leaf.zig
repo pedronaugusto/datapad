@@ -125,7 +125,7 @@ pub const empty: Leaf = .{
 /// Reads the leaf whose content lines are `lines` into `memory`, laid out
 /// by `counts` of at least its bytes. `item_start`: the leaf is the first
 /// block of a list item, where GFM reads a task list item's marker.
-pub fn read(memory: Memory, document: *const Document, lines: []const Block.Line, expansion: *Expansion, item_start: bool) Leaf {
+pub fn read(memory: Memory, document: *const Document, lines: []const Block.Line, expansion: *Expansion, item_start: bool, work: *u64) Leaf {
     const m = memory.parts();
     const text = document.text();
     var n: usize = 0;
@@ -140,6 +140,8 @@ pub fn read(memory: Memory, document: *const Document, lines: []const Block.Line
         @memcpy(m.joined[n..][0..bytes.len], bytes);
         n += bytes.len;
     }
+    // Joining reads each byte, as listing the code spans' backtick runs does.
+    work.* += 2 * n;
     // A paragraph's final spaces and tabs are not its content.
     if (lines.len != 0) {
         const last = m.line_joined[lines.len - 1];
@@ -164,6 +166,7 @@ pub fn read(memory: Memory, document: *const Document, lines: []const Block.Line
         .scratch = .{ .collapsed = m.collapsed, .folded = m.folded },
         .records = m.records,
         .expansion = expansion,
+        .work = work,
     };
     if (item_start and document.extensions.task_lists) leaf.task = taskMarker(leaf.s);
     if (leaf.task) |t| p.pos = t.end;
@@ -322,6 +325,9 @@ const Parser = struct {
     records: []Record,
     record_count: u32 = 0,
     expansion: *Expansion,
+    /// The steps the inline pass takes: bytes and items read, every scan's
+    /// included. Linear in the leaf, which the pathological tests hold it to.
+    work: *u64,
 
     /// The text read since the last item, up to `end`, as an item.
     fn flush(p: *Parser, end: usize) void {
@@ -344,6 +350,7 @@ const Parser = struct {
         while (p.pos < s.len and chars.isSpaceOrTab(s[p.pos])) p.pos += 1;
         p.text_start = p.pos;
         while (p.pos < s.len) {
+            p.work.* += 1;
             const c = s[p.pos];
             if (!special[c]) {
                 p.pos += 1;
@@ -368,7 +375,7 @@ const Parser = struct {
                 'w', 'h', 'f' => if (p.document.extensions.autolinks) p.bareUrl() else {
                     p.pos += 1;
                 },
-                '&' => if (reference.at(s, p.pos)) |r| {
+                '&' => if (reference.at(s, p.pos, p.work)) |r| {
                     _ = p.add(p.pos, r.end, .reference, r.first, r.second);
                 } else {
                     p.pos += 1;
@@ -377,7 +384,7 @@ const Parser = struct {
             }
         }
         p.flush(s.len);
-        delimiters.process(&p.delimiters, &p.leaf.list, delimiters.none);
+        delimiters.process(&p.delimiters, &p.leaf.list, delimiters.none, p.work);
         if (p.document.extensions.autolinks) p.emails();
     }
 
@@ -389,6 +396,7 @@ const Parser = struct {
         var inside: usize = 0;
         var at = list.head;
         while (at != none) {
+            p.work.* += 1;
             const it = list.items[at];
             switch (it.kind) {
                 .link_open => if (!p.records[it.a].image) {
@@ -405,10 +413,11 @@ const Parser = struct {
             }
             // The run: text items that touch, on one line.
             var last = at;
-            while (list.items[last].next != none and list.items[list.items[last].next].textual() and list.items[list.items[last].next].start == list.items[last].end) last = list.items[last].next;
+            while (list.items[last].next != none and list.items[list.items[last].next].textual() and list.items[list.items[last].next].start == list.items[last].end) : (p.work.* += 1) last = list.items[last].next;
             const start = it.start;
             const end = list.items[last].end;
             const after = list.items[last].next;
+            p.work.* += end - start;
             if (std.mem.findScalar(u8, p.s[start..end], '@') != null) {
                 // One text item for the run, the others emptied at its end.
                 var other = it.next;
@@ -429,8 +438,9 @@ const Parser = struct {
         var at = first;
         var scan: usize = list.items[at].start;
         while (std.mem.findScalarPos(u8, p.s[0..end], scan, '@')) |sign| {
+            p.work.* += sign + 1 - scan;
             const from = list.items[at].start;
-            const f = extended.email(p.s[0..end], from, sign) orelse {
+            const f = extended.email(p.s[0..end], from, sign, p.work) orelse {
                 scan = sign + 1;
                 continue;
             };
@@ -454,7 +464,7 @@ const Parser = struct {
     /// Past the spaces and tabs that start the next line.
     fn skipIndent(p: *Parser, from: usize) usize {
         var at = from;
-        while (at < p.s.len and chars.isSpaceOrTab(p.s[at])) at += 1;
+        while (at < p.s.len and chars.isSpaceOrTab(p.s[at])) : (p.work.* += 1) at += 1;
         return at;
     }
 
@@ -463,9 +473,9 @@ const Parser = struct {
     fn lineEnding(p: *Parser) void {
         const s = p.s;
         var trail = p.pos;
-        while (trail > p.text_start and chars.isSpaceOrTab(s[trail - 1])) trail -= 1;
+        while (trail > p.text_start and chars.isSpaceOrTab(s[trail - 1])) : (p.work.* += 1) trail -= 1;
         var spaces = p.pos;
-        while (spaces > p.text_start and s[spaces - 1] == ' ') spaces -= 1;
+        while (spaces > p.text_start and s[spaces - 1] == ' ') : (p.work.* += 1) spaces -= 1;
         const hard = p.pos - spaces >= 2;
         _ = p.add(trail, p.skipIndent(p.pos + 1), if (hard) .hard_break else .soft_break, 0, 0);
     }
@@ -484,7 +494,7 @@ const Parser = struct {
         const s = p.s;
         const start = p.pos;
         var after = start;
-        while (after < s.len and s[after] == '`') after += 1;
+        while (after < s.len and s[after] == '`') : (p.work.* += 1) after += 1;
         if (p.runs.closer(after - start, after)) |closer| {
             const content = code.strip(s, after, closer.start);
             _ = p.add(start, closer.end, .code, @intCast(content.start), @intCast(content.end));
@@ -498,7 +508,7 @@ const Parser = struct {
         const s = p.s;
         const start = p.pos;
         var end = start;
-        while (end < s.len and s[end] == c) end += 1;
+        while (end < s.len and s[end] == c) : (p.work.* += 1) end += 1;
         // GFM's strikethrough takes one tilde or two; more are text.
         if (c == '~' and end - start > 2) {
             p.pos = end;
@@ -532,7 +542,7 @@ const Parser = struct {
             return;
         };
         const opener = top.*;
-        if (!opener.active) {
+        if (!p.brackets.topActive()) {
             p.brackets.pop();
             p.pos += 1;
             return;
@@ -545,7 +555,7 @@ const Parser = struct {
         }
         const after = at + 1;
         if (after < s.len and s[after] == '(') {
-            if (links.inlineTail(s, after)) |t| {
+            if (links.inlineTail(s, after, p.work)) |t| {
                 const title: ?Span = if (t.title) |r| p.leaf.spanOf(r.start, r.end) else null;
                 p.link(opener, at, t.end, .inline_, p.leaf.spanOf(t.destination.start, t.destination.end), title, null, 0);
                 return;
@@ -555,7 +565,7 @@ const Parser = struct {
         var end = after;
         var label: ?links.Range = null;
         if (after < s.len and s[after] == '[') {
-            if (links.labelAt(s, after)) |l| {
+            if (links.labelAt(s, after, p.work)) |l| {
                 end = l.end;
                 if (l.inner.end > l.inner.start) {
                     kind = .reference;
@@ -585,7 +595,7 @@ const Parser = struct {
         const start = p.pos;
         const open = start + @as(usize, if (image) 3 else 2);
         if (open > s.len or s[open - 2] != '[' or s[open - 1] != '[') return false;
-        const w = links.wikiAt(s, open) orelse return false;
+        const w = links.wikiAt(s, open, p.work) orelse return false;
         if (w.label) |label| {
             const at = p.add(start, label, .bracket, 0, 0);
             p.brackets.push(.{ .item = at, .delimiters = p.delimiters.top, .image = image, .wiki = w });
@@ -633,7 +643,7 @@ const Parser = struct {
             const it = &leaf.list.items[at];
             if ((it.kind == .link_open or it.kind == .link_close) and p.records[it.a].bare) it.kind = .text;
         }
-        delimiters.process(&p.delimiters, &leaf.list, opener.delimiters);
+        delimiters.process(&p.delimiters, &leaf.list, opener.delimiters, p.work);
         p.brackets.pop();
         if (!opener.image) p.brackets.deactivate();
     }
@@ -651,7 +661,7 @@ const Parser = struct {
     }
 
     fn bareUrl(p: *Parser) void {
-        if (extended.url(p.s, p.pos)) |f| p.bare(f) else p.pos += 1;
+        if (extended.url(p.s, p.pos, p.work)) |f| p.bare(f) else p.pos += 1;
     }
 
     /// A GFM extended autolink: its text, between an opening and a closing
@@ -673,7 +683,7 @@ const Parser = struct {
     fn angle(p: *Parser) void {
         const s = p.s;
         const start = p.pos;
-        if (autolink.at(s, start)) |a| {
+        if (autolink.at(s, start, p.work)) |a| {
             const leaf = p.leaf;
             const r = p.record(.{
                 .link = .{ .kind = if (a.kind == .uri) .autolink else .email, .destination = leaf.spanOf(start + 1, a.end - 1) },
@@ -685,7 +695,7 @@ const Parser = struct {
             _ = p.add(a.end - 1, a.end, .link_close, r, 0);
             return;
         }
-        if (html.end(&p.html_scan, s, start)) |e| {
+        if (html.end(&p.html_scan, s, start, p.work)) |e| {
             _ = p.add(start, e, .html, 0, 0);
             return;
         }

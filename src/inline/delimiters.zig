@@ -97,17 +97,27 @@ fn opens(o: Delimiter, c: Delimiter) bool {
     return !(both and (o.length + c.length) % 3 == 0 and !(o.length % 3 == 0 and c.length % 3 == 0));
 }
 
+/// Whether the entry `at` lies above the entry `floor` (`none`: no floor).
+/// Entries are pushed in the text's order, so their indices are its order:
+/// a floor an earlier match took off the stack still marks its place, where
+/// waiting to meet it again let every later look back run to the bottom
+/// (cmark's issue #389).
+fn above(at: u32, floor: u32) bool {
+    return floor == none or at > floor;
+}
+
 /// Matches the delimiters above `bottom` (an entry, or `none` for the
 /// whole stack), puts emphasis items into `list` for each match, and
 /// takes every delimiter above `bottom` off the stack: what no match took
 /// stays in its run's item as text.
-pub fn process(stack: *Stack, list: *items.List, bottom: u32) void {
+pub fn process(stack: *Stack, list: *items.List, bottom: u32, work: *u64) void {
     var openers_bottom: [16]u32 = @splat(bottom);
     // The first delimiter above the bottom.
     if (stack.top == none or stack.top == bottom) return;
     var closer = stack.top;
-    while (stack.entries[closer].prev != bottom) closer = stack.entries[closer].prev;
+    while (stack.entries[closer].prev != bottom) : (work.* += 1) closer = stack.entries[closer].prev;
     while (closer != none) {
+        work.* += 1;
         const c = stack.entries[closer];
         if (!c.can_close) {
             closer = c.next;
@@ -116,7 +126,8 @@ pub fn process(stack: *Stack, list: *items.List, bottom: u32) void {
         const k = key(c);
         var opener = c.prev;
         var found = false;
-        while (opener != none and opener != bottom and opener != openers_bottom[k]) {
+        while (opener != none and above(opener, bottom) and above(opener, openers_bottom[k])) {
+            work.* += 1;
             const o = stack.entries[opener];
             if (opens(o, c)) {
                 found = true;
@@ -134,7 +145,7 @@ pub fn process(stack: *Stack, list: *items.List, bottom: u32) void {
         }
     }
     // Everything above the bottom is done with.
-    while (stack.top != bottom and stack.top != none) stack.remove(stack.top);
+    while (stack.top != bottom and stack.top != none) : (work.* += 1) stack.remove(stack.top);
 }
 
 /// Takes one or two characters off the opener's run and the closer's,

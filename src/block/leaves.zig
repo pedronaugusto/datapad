@@ -268,13 +268,16 @@ fn escaped(s: []const u8, i: usize) bool {
 }
 
 /// A table's delimiter row (GFM): cells of hyphens, each with a colon
-/// before or after or both, at least one pipe in the row. Its cell count.
+/// before or after or both, and around them the whitespace of CommonMark
+/// 0.29, which GFM's spec reads (a line tabulation and a form feed too).
+/// No pipe is needed, as cmark-gfm reads it: a row of hyphens alone under
+/// a paragraph is a setext heading's underline, which the block pass reads
+/// first. Its cell count.
 pub fn delimiterRow(row: []const u8) ?usize {
-    if (std.mem.findScalar(u8, row, '|') == null) return null;
     var cells: Cells = .init(row);
     var n: usize = 0;
     while (cells.next()) |cell| {
-        var body = row[cell.start..cell.end];
+        var body = std.mem.trim(u8, row[cell.start..cell.end], " \t\x0b\x0c");
         if (body.len != 0 and body[0] == ':') body = body[1..];
         if (body.len != 0 and body[body.len - 1] == ':') body = body[0 .. body.len - 1];
         if (body.len == 0) return null;
@@ -298,7 +301,9 @@ test "a table row's cells and a delimiter row" {
     try testing.expectEqual(2, Cells.count("abc | def"));
     try testing.expectEqual(2, delimiterRow(":-: | -----------:"));
     try testing.expectEqual(1, delimiterRow("| ------ |"));
-    try testing.expectEqual(null, delimiterRow("---"));
+    // Under a paragraph, `---` is a setext underline first; a row of one cell otherwise.
+    try testing.expectEqual(1, delimiterRow("---"));
+    try testing.expectEqual(1, delimiterRow("-\x0b"));
     try testing.expectEqual(null, delimiterRow("| -x- |"));
 }
 

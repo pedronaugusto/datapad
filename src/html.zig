@@ -457,7 +457,9 @@ fn unescaped(w: *Writer, bytes: []const u8, sink: Sink) Writer.Error!void {
             run = at;
             continue;
         }
-        if (c == '&') if (inline_pass.reference.at(bytes, at)) |r| {
+        // The writer's reading is not the parse's: its steps are not counted.
+        var steps: u64 = 0;
+        if (c == '&') if (inline_pass.reference.at(bytes, at, &steps)) |r| {
             try emit(w, sink, bytes[run..at]);
             var buffer: [8]u8 = undefined;
             var len = std.unicode.utf8Encode(r.first, &buffer) catch aegis.assert.never("a reference's code point is a scalar value");

@@ -187,6 +187,18 @@ const Pass = struct {
     all_closed: bool = true,
     /// The line has nothing left for a leaf: a fence's opening line.
     consumed: bool = false,
+    /// Counts every change to the open blocks: one opened, closed, or
+    /// turned into another kind.
+    generation: u64 = 0,
+    /// The last walk down the open blocks from where a line's rest went
+    /// blank (`from`), where it passed only lists and items: a blank rest
+    /// over the same blocks walks the same, whatever its bytes, so it is
+    /// taken in one step, where walking every open container again for
+    /// each line of a run of blank ones cost the run's length times the
+    /// depth (cmark's "empty lines in deeply nested lists").
+    blank_walk: ?BlankWalk = null,
+
+    const BlankWalk = struct { generation: u64, from: usize, container: usize, advanced: bool };
 
     fn deinit(p: *Pass) void {
         const gpa = p.gpa;
@@ -319,15 +331,37 @@ const Pass = struct {
 
         // The open blocks this line continues.
         var container: usize = 0;
+        // Where the rest of the line went blank, and whether only lists and items were continued since.
+        var blank_from: ?usize = null;
+        var lists_alone = true;
+        var advanced = false;
         while (container < old_tip) {
             p.findNextNonspace();
             p.work += 1;
+            if (p.blank and blank_from == null) {
+                if (p.blank_walk) |w| if (w.generation == p.generation and w.from == container) {
+                    if (w.advanced) p.advanceNextNonspace();
+                    container = w.container;
+                    break;
+                };
+                blank_from = container;
+            }
+            const kind = p.stack.items[container + 1].kind;
             switch (try p.continues(container + 1)) {
-                .matched => container += 1,
+                .matched => {
+                    container += 1;
+                    if (blank_from != null) {
+                        if (kind != .list and kind != .item) lists_alone = false;
+                        if (kind == .item) advanced = true;
+                    }
+                },
                 .failed => break,
                 .line_done => return,
             }
         }
+        if (blank_from) |from| if (lists_alone) {
+            p.blank_walk = .{ .generation = p.generation, .from = from, .container = container, .advanced = advanced };
+        };
         p.all_closed = container == old_tip;
         p.matched = container;
 
@@ -534,6 +568,7 @@ const Pass = struct {
         const header = p.lines.items[b.first_line + b.line_count - 1];
         if (header.spaces != 0 or leaves.Cells.count(header.of(p.text)) != columns) return false;
         try p.closeUnmatched();
+        p.generation += 1;
         if (b.line_count == 1) {
             b.kind = .table;
             p.tip().kind = .table;
@@ -625,6 +660,7 @@ const Pass = struct {
             .first_line = @intCast(p.lines.items.len),
         });
         try p.stack.append(p.gpa, .{ .kind = kind, .block = @intCast(p.blocks.items.len - 1), .end_line = p.line_number });
+        p.generation += 1;
     }
 
     /// The rest of the line, from the place reached, to the leaf at the
@@ -660,6 +696,7 @@ const Pass = struct {
     fn closeTip(p: *Pass) Error!void {
         const open = p.stack.pop() orelse aegis.assert.never("the document stays open");
         p.work += 1;
+        p.generation += 1;
         var end = p.blocks.items[open.block].span.end;
         switch (open.kind) {
             .document => aegis.assert.never("the document stays open"),
@@ -768,7 +805,7 @@ const Pass = struct {
         var at: usize = 0;
         var cursor: usize = 0;
         while (at < p.joined.items.len and p.joined.items[at] == '[') {
-            const d = references.parse(p.joined.items[at..]) orelse break;
+            const d = references.parse(p.joined.items[at..], &p.work) orelse break;
             if (!try p.define(d, at, &cursor)) break;
             at += d.len;
         }

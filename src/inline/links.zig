@@ -21,8 +21,6 @@ pub const Bracket = struct {
     /// link's text is matched above it.
     delimiters: u32,
     image: bool,
-    /// False once a link before it closed: it can no longer open one.
-    active: bool = true,
     /// A bracket was read after it: its text is no label, so it makes no
     /// collapsed or shortcut reference.
     bracket_after: bool = false,
@@ -35,6 +33,9 @@ pub const Bracket = struct {
 pub const Stack = struct {
     entries: []Bracket,
     len: u32 = 0,
+    /// Every `[` below this index is out of play: a link closed after it,
+    /// and no link holds another. An image's `![` stays in play.
+    floor: u32 = 0,
 
     pub fn push(s: *Stack, b: Bracket) void {
         aegis.assert.invariant(s.len < s.entries.len, "a leaf's brackets fit the memory sized for it");
@@ -49,19 +50,20 @@ pub const Stack = struct {
 
     pub fn pop(s: *Stack) void {
         s.len -= 1;
+        s.floor = @min(s.floor, s.len);
     }
 
-    /// A link closed: every `[` below takes no part in one, down to one
-    /// already out of play (those below it are too).
+    /// A link closed: every `[` below takes no part in one. One step,
+    /// however many images' `![` lie between, where walking down to them
+    /// made a run of images quadratic.
     pub fn deactivate(s: *Stack) void {
-        var i = s.len;
-        while (i > 0) {
-            i -= 1;
-            const b = &s.entries[i];
-            if (b.image) continue;
-            if (!b.active) break;
-            b.active = false;
-        }
+        s.floor = s.len;
+    }
+
+    /// Whether the bracket on top can still make a link or image.
+    pub fn topActive(s: *const Stack) bool {
+        const i = s.len - 1;
+        return s.entries[i].image or i >= s.floor;
     }
 };
 
@@ -78,18 +80,18 @@ pub const Tail = struct {
 };
 
 /// The inline link tail at `s[at]` (a `(`), or null.
-pub fn inlineTail(s: []const u8, at: usize) ?Tail {
+pub fn inlineTail(s: []const u8, at: usize, work: *u64) ?Tail {
     aegis.assert.invariant(s[at] == '(', "an inline link's tail starts at a `(`");
-    var i = references.spaceAndLine(s, at + 1);
+    var i = references.spaceAndLine(s, at + 1, work);
     if (i < s.len and s[i] == ')') return .{ .destination = .{ .start = i, .end = i }, .title = null, .end = i + 1 };
-    const destination = references.linkDestination(s, i) orelse return null;
+    const destination = references.linkDestination(s, i, work) orelse return null;
     i = destination.after;
     var title: ?Range = null;
-    const spaced = references.spaceAndLine(s, i);
+    const spaced = references.spaceAndLine(s, i, work);
     if (spaced != i) {
-        if (references.linkTitle(s, spaced)) |t| {
+        if (references.linkTitle(s, spaced, work)) |t| {
             title = t.range;
-            i = references.spaceAndLine(s, t.after);
+            i = references.spaceAndLine(s, t.after, work);
         } else i = spaced;
     }
     if (i >= s.len or s[i] != ')') return null;
@@ -108,10 +110,13 @@ pub const Wiki = struct { target: Range, label: ?usize, close: usize };
 /// bracket before it; its target, up to a `|` or the `]]`, on one line and
 /// not blank; its label, after the `|`, not empty. Stops at the first
 /// bracket, so each byte is read for one `[[` at most.
-pub fn wikiAt(s: []const u8, at: usize) ?Wiki {
+pub fn wikiAt(s: []const u8, at: usize, work: *u64) ?Wiki {
     var bar: ?usize = null;
     var i = at;
-    while (i < s.len) : (i += 1) switch (s[i]) {
+    while (i < s.len) : ({
+        i += 1;
+        work.* += 1;
+    }) switch (s[i]) {
         '[' => return null,
         ']' => if (i + 1 < s.len and s[i + 1] == ']') break else return null,
         '|' => if (bar == null) {
@@ -127,12 +132,12 @@ pub fn wikiAt(s: []const u8, at: usize) ?Wiki {
     return .{ .target = .{ .start = at, .end = target_end }, .label = if (bar) |b| b + 1 else null, .close = i };
 }
 
-pub fn labelAt(s: []const u8, at: usize) ?Label {
-    const l = references.linkLabel(s[at..]) orelse return null;
+pub fn labelAt(s: []const u8, at: usize, work: *u64) ?Label {
+    const l = references.linkLabel(s[at..], work) orelse return null;
     var start = at + l.inner.start;
     var end = at + l.inner.end;
-    while (start < end and isSpace(s[start])) start += 1;
-    while (end > start and isSpace(s[end - 1])) end -= 1;
+    while (start < end and isSpace(s[start])) : (work.* += 1) start += 1;
+    while (end > start and isSpace(s[end - 1])) : (work.* += 1) end -= 1;
     return .{ .inner = .{ .start = start, .end = end }, .end = at + l.end + 1 };
 }
 
@@ -194,7 +199,8 @@ test "inline link tails as §6.3 reads them" {
         .{ "(<b)c>)", "b)c", null },
     };
     for (cases) |c| {
-        const t = inlineTail(c[0], 0);
+        var work: u64 = 0;
+        const t = inlineTail(c[0], 0, &work);
         if (c[1]) |d| {
             const got = t.?;
             try testing.expectEqualStrings(d, c[0][got.destination.start..got.destination.end]);
