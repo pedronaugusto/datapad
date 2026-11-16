@@ -1,7 +1,7 @@
 //! The pull iterator: a document's blocks in order, each container entered
 //! and exited around what it holds, each leaf's content between its enter
-//! and exit (a paragraph's and a heading's inlines, a code block's and an
-//! HTML block's lines).
+//! and exit (a paragraph's and a heading's inlines, a code block's, an HTML
+//! block's and front matter's lines).
 //!
 //! It runs in memory sized once from the document (`memory`): the stack of
 //! containers open, and one leaf's inline pass sized for the largest leaf.
@@ -157,6 +157,7 @@ fn nodeOf(b: Block) Node {
         .html_block => .html_block,
         .thematic_break => aegis.assert.never("a thematic break is one event"),
         .table => .table,
+        .front_matter => .front_matter,
     };
 }
 
@@ -268,7 +269,7 @@ fn step(e: *Events) error{ExpansionTooLarge}!?Event {
             e.spaced = false;
             e.line += 1;
             const span: Span = .init(l.start, l.end);
-            return .{ .span = span, .kind = if (b.kind == .code_block) .text else .{ .html = span } };
+            return .{ .span = span, .kind = if (b.kind == .html_block) .{ .html = span } else .text };
         },
         .table => return try e.tableStep(),
         .exit_leaf => {
@@ -313,7 +314,7 @@ fn step(e: *Events) error{ExpansionTooLarge}!?Event {
                     e.part = .head_enter;
                     e.state = .table;
                 },
-                .code_block, .html_block => {
+                .code_block, .html_block, .front_matter => {
                     e.current = at;
                     e.line = 0;
                     e.spaced = false;

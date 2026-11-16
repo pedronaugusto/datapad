@@ -14,6 +14,7 @@ const chars = @import("../scan/chars.zig");
 const Block = @import("Block.zig");
 const leaves = @import("leaves.zig");
 const references = @import("references.zig");
+const front_matter = @import("front_matter.zig");
 
 const Allocator = std.mem.Allocator;
 const Reference = references.Reference;
@@ -62,6 +63,10 @@ pub fn run(gpa: Allocator, text: []const u8, extensions: Extensions, limits: Lim
     defer p.deinit();
     try p.stack.append(gpa, .{ .kind = .document, .block = std.math.maxInt(u32), .end_line = 0 });
     var start: usize = 0;
+    if (extensions.front_matter) if (front_matter.find(text)) |f| {
+        try p.frontMatter(f);
+        start = f.next;
+    };
     while (start < text.len) {
         var end = start;
         while (end < text.len and text[end] != '\n' and text[end] != '\r') end += 1;
@@ -679,6 +684,36 @@ const Pass = struct {
         parent.end_line = @max(parent.end_line, open.end_line);
         const own = &p.blocks.items[parent.block].span.end;
         if (end.compare(own.*) == .gt) own.* = end;
+    }
+
+    /// Front matter found at the text's start, as its first block: its
+    /// lines into the line table, its body's into the block's.
+    fn frontMatter(p: *Pass, f: front_matter.Found) Error!void {
+        const count = aegis.units.Count(Limits.Block, u32).fromRaw(0);
+        if (count.compare(p.limits.blocks) != .lt) return p.fail(.blocks, 0, error.TooManyBlocks);
+        const first_line: u32 = @intCast(p.lines.items.len);
+        var at: u32 = 0;
+        while (at < f.next) {
+            var end = at;
+            while (end < f.next and p.text[end] != '\n' and p.text[end] != '\r') end += 1;
+            try p.line_starts.append(p.gpa, at);
+            p.work += end - at + 1;
+            p.line_number += 1;
+            if (at >= f.body_start and at < f.close_start) try p.lines.append(p.gpa, .{ .start = at, .end = end });
+            at = end;
+            if (at < f.next) at += if (p.text[at] == '\r' and at + 1 < p.text.len and p.text[at + 1] == '\n') 2 else 1;
+        }
+        const b: Block = .{
+            .kind = .front_matter,
+            .depth = 0,
+            .span = .init(0, f.close_end),
+            .first_line = first_line,
+            .line_count = @as(u32, @intCast(p.lines.items.len)) - first_line,
+            .data = .{ .front_matter = f.format },
+        };
+        try p.blocks.append(p.gpa, b);
+        p.measure(b);
+        p.stack.items[0].last_child_end = p.line_number - 1;
     }
 
     fn measure(p: *Pass, b: Block) void {

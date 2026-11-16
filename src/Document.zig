@@ -127,6 +127,32 @@ pub fn normalizeLabel(gpa: std.mem.Allocator, label: []const u8, w: *std.Io.Writ
     return references.normalize(label, w, scratch, gpa);
 }
 
+/// Front matter: its language, its whole span (fences included) and its
+/// body's, from its first line's start to its last line's end.
+pub const FrontMatter = struct {
+    format: Format,
+    span: Span,
+    body: Span,
+
+    /// YAML between `---` lines, or TOML between `+++` lines.
+    pub const Format = pass.front_matter.Format;
+};
+
+/// The front matter the text starts with, where `Extensions.front_matter`
+/// read it.
+pub fn frontMatter(document: *const Document) ?FrontMatter {
+    const all = document.blocks();
+    if (all.len == 0 or all[0].kind != .front_matter) return null;
+    const b = all[0];
+    const body_lines = document.lines(b);
+    // An empty body lies at the closing line's start: the opening line's end, its line ending passed.
+    const body: Span = if (body_lines.len == 0) empty: {
+        const at = document.tables.line_starts[1];
+        break :empty .init(at, at);
+    } else .init(body_lines[0].start, body_lines[body_lines.len - 1].end);
+    return .{ .format = b.data.front_matter, .span = b.span, .body = body };
+}
+
 /// What the block pass measured.
 pub const Stats = struct {
     /// The most bytes a leaf's lines hold, a line feed counted after each:

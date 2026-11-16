@@ -45,6 +45,7 @@ const State = struct {
     joining_code: bool = false,
     in_code_block: bool = false,
     in_html_block: bool = false,
+    in_front_matter: bool = false,
     /// In a GFM table: its head, whether its body was opened, a cell.
     in_head: bool = false,
     in_body: bool = false,
@@ -99,6 +100,11 @@ pub fn write(w: *Writer, events: *Events, options: Options) Error!void {
     var s: State = .{ .w = w, .document = events.document, .events = events, .options = options };
     const text = events.document.text();
     while (try events.next()) |e| {
+        // Front matter is the page's data, not its text: the writer leaves it out.
+        if (s.in_front_matter or (e.kind == .enter and e.kind.enter == .front_matter)) {
+            s.in_front_matter = !(e.kind == .exit and e.kind.exit == .front_matter);
+            continue;
+        }
         const piece_of_joined = switch (e.kind) {
             .code, .html => s.joining != null and std.meta.eql(s.joining.?, e.span),
             else => false,
@@ -471,7 +477,7 @@ fn unescaped(w: *Writer, bytes: []const u8, sink: Sink) Writer.Error!void {
 pub fn writeDestination(w: *Writer, document: *const Document, link: Events.Link) Writer.Error!void {
     if (link.kind == .email) try w.writeAll("mailto:");
     if (link.kind == .extended and std.mem.startsWith(u8, link.destination.of(document.text()), "www.")) try w.writeAll("http://");
-    if (link.kind == .autolink or link.kind == .email or link.kind == .extended) return w.writeAll(link.destination.of(document.text()));
+    if (link.kind == .autolink or link.kind == .email or link.kind == .extended or link.kind == .wiki) return w.writeAll(link.destination.of(document.text()));
     try unescaped(w, link.destination.of(document.text()), .html);
 }
 
@@ -522,7 +528,8 @@ fn destination(s: *State, l: Events.Link) Writer.Error!void {
             try s.put("mailto:");
             try escapeHref(s.w, raw);
         },
-        .autolink => try escapeHref(s.w, raw),
+        // A wikilink's target is a name as written: no escapes, no references.
+        .autolink, .wiki => try escapeHref(s.w, raw),
         .extended => {
             // A bare `www.` link is an HTTP link.
             if (std.mem.startsWith(u8, raw, "www.")) try s.put("http://");

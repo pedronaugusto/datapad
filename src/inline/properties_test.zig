@@ -1,11 +1,13 @@
 //! The events' guarantees over generated text: Markdown drawn from the
 //! pieces of every inline construct and the block markers around them,
-//! parsed, and every event held to what the stream promises its readers.
+//! under any set of extensions, parsed, and every event held to what the
+//! stream promises its readers.
 const std = @import("std");
 const shakedown = @import("shakedown");
 const Document = @import("../Document.zig");
 const Events = @import("../Events.zig");
 const Span = @import("../Span.zig");
+const Extensions = @import("../Options.zig").Extensions;
 
 const testing = std.testing;
 const gen = shakedown.gen;
@@ -17,11 +19,15 @@ const pieces = [_][]const u8{
     "![",    "<",     ">",    "<a>",    "</a>",  "<a b='",   "<!--",      "-->",          "<?",      "?>",
     "&amp;", "&#35;", "&#x;", "&ngE;",  "\\",    "\\*",      "\\[",       "<http://a.b>", "<a@b.c>", "(",
     ")",     "\"t\"", "'",    "\u{e9}", "\xff",  "\x00",     "x*y",       "_a_",          "!",       "&",
+    "[[",    "]]",    "|",    "[[a]]",  "[[a|",  "![[",      "~",         "~~",           "| b |",   "www.a.b",
 };
+/// What a text may start with: front matter, closed or not.
+const heads = [_][]const u8{ "", "", "---\nk: v\n---\n", "+++\nk = 1\n+++\n", "---\n", "---\n...\n" };
 const definitions = [_][]const u8{ "[x]: /u 't'\n", "[y]: <v w>\n", "" };
 
 fn draw(s: *shakedown.Source, buffer: []u8) []const u8 {
     var len: usize = 0;
+    len += put(buffer[len..], heads[gen.intRange(s, usize, 0, heads.len - 1)]);
     len += put(buffer[len..], definitions[gen.intRange(s, usize, 0, definitions.len - 1)]);
     const lines = gen.intRange(s, usize, 1, 6);
     for (0..lines) |_| {
@@ -44,8 +50,8 @@ fn inside(inner: Span, outer: Span) bool {
 }
 
 /// Every guarantee of the events over `text`.
-fn check(text: []const u8) !void {
-    var document = try Document.parse(testing.allocator, .init(text), .{});
+fn check(text: []const u8, extensions: Extensions) !void {
+    var document = try Document.parse(testing.allocator, .init(text), .{ .extensions = extensions });
     defer document.deinit();
     var events = try Events.init(testing.allocator, &document);
     defer events.deinit();
@@ -111,7 +117,18 @@ test "the events' guarantees hold on generated text" {
     try shakedown.check(testing.allocator, {}, struct {
         fn one(_: void, case: *shakedown.Case) anyerror!void {
             var buffer: [1024]u8 = undefined;
-            try check(draw(case.source, &buffer));
+            const s = case.source;
+            // Each extension on or off, so every syntax meets every other.
+            const extensions: Extensions = .{
+                .tables = gen.intRange(s, u8, 0, 1) == 1,
+                .task_lists = gen.intRange(s, u8, 0, 1) == 1,
+                .strikethrough = gen.intRange(s, u8, 0, 1) == 1,
+                .autolinks = gen.intRange(s, u8, 0, 1) == 1,
+                .tagfilter = gen.intRange(s, u8, 0, 1) == 1,
+                .wikilinks = gen.intRange(s, u8, 0, 1) == 1,
+                .front_matter = gen.intRange(s, u8, 0, 1) == 1,
+            };
+            try check(draw(s, &buffer), extensions);
         }
     }.one, .{ .cases = 3000 });
 }

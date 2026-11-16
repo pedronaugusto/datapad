@@ -4,9 +4,9 @@ datapad is a CommonMark and GitHub Flavored Markdown parser for Zig: a pull pars
 of one (a link's destination, title and label, a code block's info string, a table cell), carries its exact byte span,
 and an HTML writer that gives CommonMark's reference output, safe by default.
 
-It is being built: the block pass, the events with CommonMark's inlines, GitHub Flavored Markdown's extensions and the
-HTML writer are in. The writer gives the CommonMark 0.31.2 spec's HTML for every one of its 652 examples, and the GFM
-spec's for every one of its 24 extension examples.
+It is being built: the block pass, the events with CommonMark's inlines, GitHub Flavored Markdown's extensions,
+wikilinks, front matter and the HTML writer are in. The writer gives the CommonMark 0.31.2 spec's HTML for every one of
+its 652 examples, and the GFM spec's for every one of its 24 extension examples.
 
 ## Licence
 

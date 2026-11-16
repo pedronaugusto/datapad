@@ -4,6 +4,7 @@
 //! indentation taken off).
 const aegis = @import("aegis");
 const Span = @import("../Span.zig");
+const front_matter = @import("front_matter.zig");
 
 pub const Kind = enum(u8) {
     block_quote,
@@ -17,6 +18,8 @@ pub const Kind = enum(u8) {
     /// GFM's table: its lines are its header row, its delimiter row and its
     /// body rows.
     table,
+    /// Front matter, the text's first block: its lines are its body's.
+    front_matter,
 };
 
 /// A heading's level, `#` to `######`.
@@ -48,6 +51,8 @@ pub const Data = union(enum) {
     html: HtmlKind,
     /// A table's columns: its delimiter row's cells.
     table: u32,
+    /// Front matter's language.
+    front_matter: front_matter.Format,
 };
 
 /// A content line: where its content lies, and how many columns of a tab a

@@ -1,8 +1,8 @@
 //! datapad: CommonMark and GitHub Flavored Markdown. A pull parser whose
 //! every event, and every part of one, carries its exact byte span, and an
 //! HTML writer that gives CommonMark's reference output. See README.md and
-//! docs/design.md. Being built: its vocabulary, character scanning, the
-//! block pass and the events with CommonMark's inlines so far.
+//! docs/design.md. Being built: CommonMark, GFM's extensions, wikilinks,
+//! front matter and the HTML writer are in.
 pub const Span = @import("Span.zig");
 pub const Limits = @import("Limits.zig");
 pub const Options = @import("Options.zig");

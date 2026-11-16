@@ -357,8 +357,10 @@ const Parser = struct {
                 '~' => if (p.document.extensions.strikethrough) p.delimiterRun(c) else {
                     p.pos += 1;
                 },
-                '[' => p.openBracket(1, false),
-                '!' => if (p.pos + 1 < s.len and s[p.pos + 1] == '[') p.openBracket(2, true) else {
+                '[' => if (!p.wiki(false)) p.openBracket(1, false),
+                '!' => if (p.pos + 1 < s.len and s[p.pos + 1] == '[') {
+                    if (!p.wiki(true)) p.openBracket(2, true);
+                } else {
                     p.pos += 1;
                 },
                 ']' => p.closeBracket(),
@@ -535,6 +537,12 @@ const Parser = struct {
             p.pos += 1;
             return;
         }
+        if (opener.wiki) |w| {
+            // A wikilink closes at its own `]]`; a code span or raw HTML in its label that ran past it leaves it text.
+            if (at != w.close) return p.noLink();
+            const target = p.leaf.spanOf(w.target.start, w.target.end);
+            return p.link(opener, at, at + 2, .wiki, target, null, null, 0);
+        }
         const after = at + 1;
         if (after < s.len and s[after] == '(') {
             if (links.inlineTail(s, after)) |t| {
@@ -566,6 +574,34 @@ const Parser = struct {
         const definition = p.document.find(key) orelse return p.noLink();
         const reproduced = @as(u64, definition.destination.len().raw()) + if (definition.title) |t| t.len().raw() else 0;
         p.link(opener, at, end, kind, definition.destination, definition.title, p.leaf.spanOf(l.start, l.end), reproduced);
+    }
+
+    /// A `[[` (or `![[`, `image`) at `pos`: a wikilink where the extension
+    /// is on and one starts here. Its target alone is its text, as
+    /// written; a label is read as a link's text is, up to the `]]`.
+    fn wiki(p: *Parser, image: bool) bool {
+        if (!p.document.extensions.wikilinks) return false;
+        const s = p.s;
+        const start = p.pos;
+        const open = start + @as(usize, if (image) 3 else 2);
+        if (open > s.len or s[open - 2] != '[' or s[open - 1] != '[') return false;
+        const w = links.wikiAt(s, open) orelse return false;
+        if (w.label) |label| {
+            const at = p.add(start, label, .bracket, 0, 0);
+            p.brackets.push(.{ .item = at, .delimiters = p.delimiters.top, .image = image, .wiki = w });
+            return true;
+        }
+        const leaf = p.leaf;
+        const r = p.record(.{
+            .link = .{ .kind = .wiki, .destination = leaf.spanOf(w.target.start, w.target.end) },
+            .image = image,
+            .span = leaf.spanOf(start, w.close + 2),
+        }, 0);
+        _ = p.add(start, open, .link_open, r, 0);
+        _ = p.add(open, w.target.end, .text, 0, 0);
+        _ = p.add(w.close, w.close + 2, .link_close, r, 0);
+        if (!image) p.brackets.deactivate();
+        return true;
     }
 
     fn noLink(p: *Parser) void {

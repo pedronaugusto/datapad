@@ -26,6 +26,9 @@ pub const Bracket = struct {
     /// A bracket was read after it: its text is no label, so it makes no
     /// collapsed or shortcut reference.
     bracket_after: bool = false,
+    /// A wikilink's `[[target|`: it closes at the `]]` found when it was
+    /// read, and at no other `]`.
+    wiki: ?Wiki = null,
 };
 
 /// The brackets still open, last on top.
@@ -96,6 +99,33 @@ pub fn inlineTail(s: []const u8, at: usize) ?Tail {
 /// A label after a link's text, at `s[at]` (a `[`): its content, spaces
 /// and tabs at either end taken off (empty for `[]`), and past its `]`.
 pub const Label = struct { inner: Range, end: usize };
+
+/// A wikilink after its `[[` (or `![[`): its target, where its label starts
+/// when it has one, and where its `]]` is.
+pub const Wiki = struct { target: Range, label: ?usize, close: usize };
+
+/// The wikilink whose `[[` ends at `at`: up to the first `]]`, with no other
+/// bracket before it; its target, up to a `|` or the `]]`, on one line and
+/// not blank; its label, after the `|`, not empty. Stops at the first
+/// bracket, so each byte is read for one `[[` at most.
+pub fn wikiAt(s: []const u8, at: usize) ?Wiki {
+    var bar: ?usize = null;
+    var i = at;
+    while (i < s.len) : (i += 1) switch (s[i]) {
+        '[' => return null,
+        ']' => if (i + 1 < s.len and s[i + 1] == ']') break else return null,
+        '|' => if (bar == null) {
+            bar = i;
+        },
+        '\n' => if (bar == null) return null,
+        else => {},
+    };
+    if (i >= s.len) return null;
+    const target_end = bar orelse i;
+    if (std.mem.trim(u8, s[at..target_end], " \t").len == 0) return null;
+    if (bar) |b| if (b + 1 == i) return null;
+    return .{ .target = .{ .start = at, .end = target_end }, .label = if (bar) |b| b + 1 else null, .close = i };
+}
 
 pub fn labelAt(s: []const u8, at: usize) ?Label {
     const l = references.linkLabel(s[at..]) orelse return null;
