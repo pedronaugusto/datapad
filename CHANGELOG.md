@@ -8,6 +8,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `Events.writeDestination`: a link's destination as CommonMark reads it, the URL it means (escapes and references resolved, `mailto:` and `http://` supplied as the HTML writer supplies them), with nothing escaped for HTML: for a terminal's link or a program's lookup. `html.writeDestination` is it escaped for HTML.
+
 - `Events.work`: the steps the inline pass has taken, every byte and item it read, each scan's bytes included; with the block pass's (`Document.stats`), what the pathological tests hold to 48 steps per input byte. cmark's and cmark-gfm's pathological inputs, 26 of them, and 10 shapes of datapad's own extensions are tests, each held to that bound and to the HTML cmark's test expects (their BSD 2-Clause notice in LICENSES/cmark-BSD-2-Clause.txt). A fuzz target over any bytes, or Markdown mutated, under any extensions and expansion limit: every span, nesting and order, the work bound, and `ExpansionTooLarge` exactly when a recount of the stream passes the limit, checked against a planted fault. `bay bench` rows (`bench/main.zig`): parsing and HTML over the CommonMark spec, the spec at 16 MiB, any corpus given (`--corpus name=file`), and the pathological shapes at three sizes; CI compiles them. The README's usage (`examples/usage.zig`, run with the tests), and docs/design.md.
 
 ### Fixed

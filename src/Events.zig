@@ -16,6 +16,7 @@ const Block = @import("block/Block.zig");
 const event = @import("event.zig");
 const Leaf = @import("inline.zig").Leaf;
 const leaves = @import("block.zig").leaves;
+const resolve = @import("resolve.zig");
 
 pub const Event = event.Event;
 pub const Node = event.Node;
@@ -146,6 +147,15 @@ pub fn title(e: *const Events, link: Link) ?Span {
 pub fn label(e: *const Events, link: Link) ?Span {
     const p = e.leaf.part(link) orelse return null;
     return p.label;
+}
+
+/// `link`'s destination as CommonMark reads it, the URL it means: its
+/// backslash escapes and character references resolved, `mailto:` before
+/// an e-mail address and `http://` before a bare `www.` one. Nothing is
+/// escaped for HTML or for a URL: `html.writeDestination` is that, for a
+/// page. For a terminal's link, a program's lookup, a log.
+pub fn writeDestination(e: *const Events, w: *std.Io.Writer, link: Link) std.Io.Writer.Error!void {
+    try resolve.destination(w, e.document.text(), link, resolve.plain);
 }
 
 fn nodeOf(b: Block) Node {

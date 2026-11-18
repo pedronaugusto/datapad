@@ -9,8 +9,7 @@ const xenoglyph = @import("xenoglyph");
 const Document = @import("Document.zig");
 const Events = @import("Events.zig");
 const Span = @import("Span.zig");
-const chars = @import("scan/chars.zig");
-const inline_pass = @import("inline.zig");
+const resolve = @import("resolve.zig");
 
 const Writer = std.Io.Writer;
 
@@ -434,53 +433,22 @@ pub fn escape(w: *Writer, bytes: []const u8) Writer.Error!void {
     try w.writeAll(bytes[run..]);
 }
 
-/// The bytes a destination, title or info string means: its backslash
-/// escapes and character references resolved.
+/// How resolved bytes are written: escaped for HTML text, or for a URL.
 const Sink = enum { html, href };
 
-fn emit(w: *Writer, sink: Sink, bytes: []const u8) Writer.Error!void {
-    switch (sink) {
-        .html => try escape(w, bytes),
-        .href => try escapeHref(w, bytes),
-    }
-}
-
+/// The bytes a destination, title or info string means, its backslash escapes and character
+/// references resolved, written as `sink` needs.
 fn unescaped(w: *Writer, bytes: []const u8, sink: Sink) Writer.Error!void {
-    var at: usize = 0;
-    var run: usize = 0;
-    while (at < bytes.len) {
-        const c = bytes[at];
-        if (c == '\\' and at + 1 < bytes.len and chars.isAsciiPunctuation(bytes[at + 1])) {
-            try emit(w, sink, bytes[run..at]);
-            try emit(w, sink, bytes[at + 1 .. at + 2]);
-            at += 2;
-            run = at;
-            continue;
-        }
-        // The writer's reading is not the parse's: its steps are not counted.
-        var steps: u64 = 0;
-        if (c == '&') if (inline_pass.reference.at(bytes, at, &steps)) |r| {
-            try emit(w, sink, bytes[run..at]);
-            var buffer: [8]u8 = undefined;
-            var len = std.unicode.utf8Encode(r.first, &buffer) catch aegis.assert.never("a reference's code point is a scalar value");
-            if (r.second != 0) len += std.unicode.utf8Encode(r.second, buffer[len..]) catch aegis.assert.never("a reference's code point is a scalar value");
-            try emit(w, sink, buffer[0..len]);
-            at = r.end;
-            run = at;
-            continue;
-        };
-        at += 1;
+    switch (sink) {
+        .html => try resolve.bytes(w, bytes, escape),
+        .href => try resolve.bytes(w, bytes, escapeHref),
     }
-    try emit(w, sink, bytes[run..]);
 }
 
-/// A destination as written, unescaped and its references decoded: the
-/// URL it means.
+/// A destination as `Events.writeDestination` writes it (unescaped, its references decoded:
+/// the URL it means), escaped for HTML.
 pub fn writeDestination(w: *Writer, document: *const Document, link: Events.Link) Writer.Error!void {
-    if (link.kind == .email) try w.writeAll("mailto:");
-    if (link.kind == .extended and std.mem.startsWith(u8, link.destination.of(document.text()), "www.")) try w.writeAll("http://");
-    if (link.kind == .autolink or link.kind == .email or link.kind == .extended or link.kind == .wiki) return w.writeAll(link.destination.of(document.text()));
-    try unescaped(w, link.destination.of(document.text()), .html);
+    try resolve.destination(w, document.text(), link, escape);
 }
 
 /// The bytes a URL keeps as they are; every other is percent-encoded, but

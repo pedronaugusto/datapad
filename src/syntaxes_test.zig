@@ -230,3 +230,26 @@ test "no front matter: the extension off, unclosed, or not at the start" {
 test "the HTML writer leaves front matter out" {
     try expectHtml("---\ntitle: <b>x</b>\n---\n*Page*\n", matter, "<p><em>Page</em></p>\n");
 }
+
+test "a destination is written as the URL it means: escapes and references resolved, nothing escaped for HTML" {
+    const text = "[a](/q?x=1&amp;y=\\*2) <me@example.com> www.example.com/p\n";
+    var document = try Document.parse(testing.allocator, .init(text), .{});
+    defer document.deinit();
+    var events = try Events.init(testing.allocator, &document);
+    defer events.deinit();
+    var plain: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer plain.deinit();
+    var page: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer page.deinit();
+    while (try events.next()) |event| switch (event.kind) {
+        .enter => |node| if (node == .link) {
+            try events.writeDestination(&plain.writer, node.link);
+            try plain.writer.writeByte(' ');
+            try html.writeDestination(&page.writer, &document, node.link);
+            try page.writer.writeByte(' ');
+        },
+        else => {},
+    };
+    try testing.expectEqualStrings("/q?x=1&y=*2 mailto:me@example.com http://www.example.com/p ", plain.written());
+    try testing.expectEqualStrings("/q?x=1&amp;y=*2 mailto:me@example.com http://www.example.com/p ", page.written());
+}
