@@ -7,6 +7,28 @@ depends on aegis and xenoglyph, does no I/O, and parses bytes it is given.
 This describes the implementation in this repository. Change it with the code
 whenever an owner, invariant or decision changes.
 
+## Scope
+
+In: CommonMark 0.31.2 whole; GFM's tables, task list items, strikethrough,
+extended autolinks and tagfilter, each a flag (`.gfm` sets all); two opt-in
+syntaxes, wikilinks (`[[target]]`, `[[target|label]]`) and front matter (a
+leading `---` or `+++` block given as one event; datapad reads neither the YAML
+nor the TOML); the HTML writer, CommonMark's reference HTML byte for byte, safe
+by default (raw HTML omitted, `javascript:`, `vbscript:`, `file:` and non-image
+`data:` destinations blanked), `unsafe` to pass raw HTML through.
+
+Out, by decision:
+
+- Footnotes, definition lists, math, superscript, heading attributes, smart
+  punctuation, alerts: in neither spec. Each is a flag when a consumer asks; the
+  block and inline layers take a construct without reshaping.
+- A tree: events are the API. A consumer that wants a tree builds one from
+  events with a stack, as every renderer does anyway.
+- Other writers (round trip, man, LaTeX, a terminal), syntax highlighting of code
+  blocks (datapad gives the info string) and heading slugs (a link checker's
+  policy, not Markdown's).
+- Reading files: datapad parses bytes it is given.
+
 ## Layers
 
 [ci/layers.zig](../ci/layers.zig) checks the production import graph: imports
