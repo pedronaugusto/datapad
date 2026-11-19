@@ -177,7 +177,8 @@ pub fn normalize(scratch: Scratch, label: []const u8) ?[]const u8 {
     }
     if (len == 0) return null;
     var w: std.Io.Writer = .fixed(scratch.folded);
-    xenoglyph.case.write(.fold, scratch.collapsed[0..len], &w, .{}) catch return null;
+    xenoglyph.case.write(.fold, scratch.collapsed[0..len], &w, .{}) catch
+        aegis.assert.never("full case folding at most triples a text's bytes, and `folded` is three times `collapsed`");
     return w.buffered();
 }
 
