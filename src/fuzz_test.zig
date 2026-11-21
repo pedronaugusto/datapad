@@ -8,6 +8,7 @@
 //! against a recount over the stream run without the limit. `bay dev test`
 //! runs a few cases of each; the fuzz job runs them for its minutes.
 const std = @import("std");
+const aegis = @import("aegis");
 const shakedown = @import("shakedown");
 const Document = @import("Document.zig");
 const Events = @import("Events.zig");
@@ -47,7 +48,7 @@ fn inside(inner: Span, outer: Span) bool {
 }
 
 /// What a drain saw: the bytes reference links reproduced, and the work.
-const Drained = struct { reproduced: u64, work: u64, refused: bool };
+const Drained = struct { reproduced: aegis.units.Bytes(u64), work: u64, refused: bool };
 
 /// Drains `document`'s events through every check, writing them as HTML
 /// on the way: the writer reads the same stream.
@@ -57,10 +58,11 @@ fn drain(document: *const Document, text: []const u8) !Drained {
     defer events.deinit();
     var open: [2048]Events.Event = undefined;
     // The end of the last node closed at each depth: its next sibling starts at or after it.
-    var sibling_end: [2049]u32 = @splat(0);
+    var sibling_end: [2049]Span.Offset = @splat(.fromRaw(0));
     var depth: usize = 0;
-    var last_start: u32 = 0;
-    var reproduced: u64 = 0;
+    var last_start: Span.Offset = .fromRaw(0);
+    var reproduced: aegis.units.Bytes(u64) = .fromRaw(0);
+    const length: Span.Offset = .fromRaw(@intCast(text.len));
     var refused = false;
     while (true) {
         const next = events.next() catch |err| switch (err) {
@@ -73,29 +75,32 @@ fn drain(document: *const Document, text: []const u8) !Drained {
         };
         const e = next orelse break;
         try testing.expect(e.span.start.compare(e.span.end) != .gt);
-        try testing.expect(e.span.end.raw() <= text.len);
+        try testing.expect(e.span.end.compare(length) != .gt);
         if (depth > 0) try testing.expect(inside(e.span, open[depth - 1].span));
         switch (e.kind) {
             .enter => |n| {
-                try testing.expect(e.span.start.raw() >= last_start);
-                try testing.expect(e.span.start.raw() >= sibling_end[depth]);
-                last_start = e.span.start.raw();
+                try testing.expect(e.span.start.compare(last_start) != .lt);
+                try testing.expect(e.span.start.compare(sibling_end[depth]) != .lt);
+                last_start = e.span.start;
                 switch (n) {
                     .link, .image => |l| {
                         const by_reference = l.kind == .reference or l.kind == .collapsed or l.kind == .shortcut;
                         if (!by_reference) try testing.expect(inside(l.destination, e.span));
                         if (events.label(l)) |t| try testing.expect(inside(t, e.span));
                         if (events.title(l)) |t| {
-                            try testing.expect(t.end.raw() <= text.len);
+                            try testing.expect(t.end.compare(length) != .gt);
                             if (!by_reference) try testing.expect(inside(t, e.span));
                         }
-                        if (by_reference) reproduced += l.destination.len().raw() + if (events.title(l)) |t| t.len().raw() else 0;
+                        if (by_reference) {
+                            reproduced = try reproduced.add(l.destination.len().convert(u64));
+                            if (events.title(l)) |t| reproduced = try reproduced.add(t.len().convert(u64));
+                        }
                     },
                     else => {},
                 }
                 open[depth] = e;
                 depth += 1;
-                sibling_end[depth] = e.span.start.raw();
+                sibling_end[depth] = e.span.start;
             },
             .exit => |n| {
                 try testing.expect(depth > 0);
@@ -103,11 +108,11 @@ fn drain(document: *const Document, text: []const u8) !Drained {
                 const entered = open[depth];
                 try testing.expect(std.meta.eql(entered.span, e.span));
                 try testing.expect(std.meta.eql(entered.kind.enter, n));
-                sibling_end[depth] = e.span.end.raw();
+                sibling_end[depth] = e.span.end;
             },
             else => {
-                try testing.expect(e.span.start.raw() >= last_start);
-                last_start = e.span.start.raw();
+                try testing.expect(e.span.start.compare(last_start) != .lt);
+                last_start = e.span.start;
                 if (e.kind == .text) for (e.span.of(text)) |c| try testing.expect(c != '\n' and c != '\r');
             },
         }
@@ -158,7 +163,7 @@ fn check(text: []const u8, extensions: Extensions, limit: u32) !void {
     var limited = try Document.parse(gpa, .init(text), .{ .extensions = extensions, .limits = limits, .diagnostics = &diagnostic });
     defer limited.deinit();
     const bounded = try drain(&limited, text);
-    try testing.expectEqual(free.reproduced > limit, bounded.refused);
+    try testing.expectEqual(free.reproduced.compare(.fromRaw(limit)) == .gt, bounded.refused);
     if (bounded.refused) try testing.expectEqual(Limits.Limit.expansion, diagnostic.limit);
 }
 

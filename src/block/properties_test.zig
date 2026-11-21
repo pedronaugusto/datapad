@@ -5,6 +5,7 @@
 const std = @import("std");
 const shakedown = @import("shakedown");
 const Document = @import("../Document.zig");
+const Span = @import("../Span.zig");
 const Block = Document.Block;
 
 const testing = std.testing;
@@ -49,13 +50,14 @@ fn isContainer(k: Block.Kind) bool {
 fn check(text: []const u8) !void {
     var document = try Document.parse(testing.allocator, .init(text), .{});
     defer document.deinit();
+    const length: Span.Offset = .fromRaw(@intCast(text.len));
     const blocks = document.blocks();
     // The open ancestors of the block being read: their indexes.
     var ancestors: [64]usize = undefined;
     var last_child: [65]?usize = @splat(null);
     for (blocks, 0..) |b, i| {
         try testing.expect(b.span.start.compare(b.span.end) != .gt);
-        try testing.expect(b.span.end.raw() <= text.len);
+        try testing.expect(b.span.end.compare(length) != .gt);
         // Depths nest: one deeper than a container before it, or back out.
         if (i == 0) try testing.expectEqual(0, b.depth) else {
             const before = blocks[i - 1];
@@ -81,7 +83,7 @@ fn check(text: []const u8) !void {
         for (document.lines(b)) |l| {
             try testing.expect(l.start <= l.end);
             try testing.expect(l.start - @intFromBool(l.spaces != 0) >= previous_end);
-            try testing.expect(l.end <= b.span.end.raw());
+            try testing.expect(Span.Offset.fromRaw(l.end).compare(b.span.end) != .gt);
             for (text[l.start..l.end]) |c| try testing.expect(c != '\n' and c != '\r');
             if (l.spaces != 0) try testing.expectEqual('\t', text[l.start - 1]);
             previous_end = l.end;
@@ -99,7 +101,7 @@ fn check(text: []const u8) !void {
     // definition of it.
     const definitions = document.definitions();
     for (definitions) |d| {
-        try testing.expect(d.destination.end.raw() <= text.len);
+        try testing.expect(d.destination.end.compare(length) != .gt);
         const key = document.keyOf(d);
         try testing.expect(key.len > 0);
         const found = document.find(key) orelse return error.TestLabelNotFound;

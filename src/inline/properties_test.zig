@@ -58,19 +58,20 @@ fn check(text: []const u8, extensions: Extensions) !void {
     // The nodes open: their events.
     var open: [64]Events.Event = undefined;
     var depth: usize = 0;
-    var last_start: u32 = 0;
+    var last_start: Span.Offset = .fromRaw(0);
+    const length: Span.Offset = .fromRaw(@intCast(text.len));
     while (try events.next()) |e| {
         try testing.expect(e.span.start.compare(e.span.end) != .gt);
-        try testing.expect(e.span.end.raw() <= text.len);
+        try testing.expect(e.span.end.compare(length) != .gt);
         if (depth > 0) try testing.expect(inside(e.span, open[depth - 1].span));
         switch (e.kind) {
             .enter => |n| {
-                try testing.expect(e.span.start.raw() >= last_start);
-                last_start = e.span.start.raw();
+                try testing.expect(e.span.start.compare(last_start) != .lt);
+                last_start = e.span.start;
                 switch (n) {
                     .link, .image => |l| {
                         if (l.kind != .reference and l.kind != .collapsed and l.kind != .shortcut) try testing.expect(inside(l.destination, e.span));
-                        if (events.title(l)) |t| try testing.expect(t.end.raw() <= text.len);
+                        if (events.title(l)) |t| try testing.expect(t.end.compare(length) != .gt);
                         if (events.label(l)) |t| try testing.expect(inside(t, e.span));
                     },
                     else => {},
@@ -88,8 +89,8 @@ fn check(text: []const u8, extensions: Extensions) !void {
                 try testing.expect(std.meta.eql(entered.kind.enter, n));
             },
             else => {
-                try testing.expect(e.span.start.raw() >= last_start);
-                last_start = e.span.start.raw();
+                try testing.expect(e.span.start.compare(last_start) != .lt);
+                last_start = e.span.start;
                 const bytes = e.span.of(text);
                 switch (e.kind) {
                     // Text never crosses a line.

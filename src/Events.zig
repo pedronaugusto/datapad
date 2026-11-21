@@ -75,9 +75,12 @@ fn deepest(document: *const Document) u32 {
 /// `maxInt(usize)` when they pass the address space.
 pub fn memory(document: *const Document) usize {
     const plan = Leaf.Memory.plan(Leaf.counts(document.stats().largest_leaf));
-    const leaf = (plan.size() catch return std.math.maxInt(usize)).raw();
-    const stack = (Stack.plan(.{ .stack = deepest(document) }).size() catch return std.math.maxInt(usize)).raw();
-    return std.math.add(usize, leaf, stack + Stack.alignment - 1 + Leaf.Memory.alignment - 1) catch std.math.maxInt(usize);
+    const leaf = plan.size() catch return std.math.maxInt(usize);
+    const stack = Stack.plan(.{ .stack = deepest(document) }).size() catch return std.math.maxInt(usize);
+    // Room to align each part where the buffer does not.
+    const padding: aegis.units.Bytes(usize) = .fromRaw(Stack.alignment - 1 + Leaf.Memory.alignment - 1);
+    const both = leaf.add(stack) catch return std.math.maxInt(usize);
+    return (both.add(padding) catch return std.math.maxInt(usize)).raw();
 }
 
 /// The events of `document`, in memory from `gpa`.

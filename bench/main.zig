@@ -48,7 +48,7 @@ const Context = struct {
                 try datapad.html.write(&sink.writer, &events, .{});
                 c.seen +%= sink.fullCount();
             } else {
-                while (try events.next()) |e| c.seen +%= e.span.end.raw();
+                while (try events.next()) |e| std.mem.doNotOptimizeAway(e.span.end);
             }
         }
     }

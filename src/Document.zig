@@ -79,18 +79,20 @@ pub fn lines(document: *const Document, block: Block) []const Block.Line {
 /// A line and a column, both from 1, the column in bytes.
 pub const Position = struct { line: u32, column: u32 };
 
-/// Where `offset` is: an offset at a line ending is on the line it ends.
+/// Where `offset` is: an offset at a line ending is on the line it ends. A column is a
+/// u32 as the offset is: the one offset with none is u32's last on the text's first line.
 pub fn lineOf(document: *const Document, offset: Span.Offset) Position {
     const starts = document.tables.line_starts;
-    const at = offset.raw();
-    // The last line starting at or before `at`.
+    // The last line starting at or before `offset`.
     var low: usize = 0;
     var high: usize = starts.len;
     while (high - low > 1) {
         const mid = low + (high - low) / 2;
-        if (starts[mid] <= at) low = mid else high = mid;
+        if (Span.Offset.fromRaw(starts[mid]).compare(offset) != .gt) low = mid else high = mid;
     }
-    return .{ .line = @intCast(low + 1), .column = at - starts[low] + 1 };
+    const into = offset.sub(.fromRaw(starts[low])) catch aegis.assert.never("the line found starts at or before the offset");
+    const column = into.add(.fromRaw(1)) catch aegis.assert.never("a column within u32: no offset is u32's last on the text's first line");
+    return .{ .line = @intCast(low + 1), .column = column.raw() };
 }
 
 /// Every definition in document order, a label given twice included.
