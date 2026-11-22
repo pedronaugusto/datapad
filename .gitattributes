@@ -1,0 +1,8 @@
+# Everything this repository holds is LF on every platform: the spec texts the
+# tests read (testdata/commonmark, testdata/gfm) are split at their example
+# fences line by line, and a checkout that wrote CRLF would find none.
+* text=auto eol=lf
+
+# Two changes that add lines under one group of CHANGELOG.md both keep them, with no
+# conflict to resolve; `bay release` orders the section.
+CHANGELOG.md merge=union
