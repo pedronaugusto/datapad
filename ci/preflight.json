@@ -1,4 +1,5 @@
 {
+  "policy": "family",
   "sources": [
     "src"
   ],
@@ -11,6 +12,13 @@
   ],
   "test_dependencies": [
     "shakedown"
+  ],
+  "extra_checks": [
+    [
+      "zig",
+      "build",
+      "check-consumer"
+    ]
   ],
   "shipped": {
     "LICENSES": "the licences of what the package carries from others: WHATWG's table src/scan/entities.zig is generated from (CC BY 4.0 asks that it travel with the code made from it), and cmark's, whose pathological tests src/pathological_test.zig is written from (BSD 2-Clause)",

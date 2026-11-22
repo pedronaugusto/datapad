@@ -90,6 +90,9 @@ pub fn dev(b: *std.Build, tools: type) void {
             .optimize = optimize,
         },
     });
+    // A project that depends on datapad by path, with aegis and xenoglyph to fetch: the build a
+    // consumer gets.
+    tools.preflight.addConsumerCheck(b, p, .{ .package = "datapad", .program = p.path("ci/consumer.zig"), .packages = &.{ p.dependency("aegis", .{ .target = target, .optimize = optimize }), p.dependency("xenoglyph", .{ .target = target, .optimize = optimize }) } });
     // `check` compiles the benchmarks as well, in the mode asked for.
     const bench = b.addExecutable(.{ .name = "datapad-bench", .root_module = b.createModule(.{
         .root_source_file = p.path("bench/main.zig"),

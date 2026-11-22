@@ -1,6 +1,6 @@
 .{
     .name = .datapad,
-    .version = "0.0.0",
+    .version = "0.1.0",
     .minimum_zig_version = "0.17.0",
     .fingerprint = 0xcc3d2ae97bd9eabe,
     .paths = .{ "build.zig", "build.zig.zon", "src", "docs", "README.md", "CHANGELOG.md", "LICENSE", "LICENSES" },
