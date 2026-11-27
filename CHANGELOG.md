@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-27
+
 ### Added
 
 - `Events.writeDestination`: a link's destination as CommonMark reads it, the URL it means (escapes and references resolved, `mailto:` and `http://` supplied as the HTML writer supplies them), with nothing escaped for HTML: for a terminal's link or a program's lookup. `html.writeDestination` is it escaped for HTML.
@@ -29,4 +31,3 @@ follow [Semantic Versioning](https://semver.org/).
 
 - Inputs that took time growing with the square of their length now take time linear in it: a run of images (`![[]()` repeated) walked the bracket stack down to the last link for each link; an unclosed run of `(` in destinations (`[a](b` repeated) was read to the leaf's end for each link, and a destination's parentheses now nest at most 32 deep, as cmark's; an emphasis closer that found no opener left a floor a later match could take off the stack, after which each look back ran to the bottom (cmark's issue #389); a URL's trailing parentheses were counted again for each one trimmed; and each blank line under deeply nested lists walked every open list again.
 - A GFM table's delimiter row needs no pipe, and may have a line tabulation or form feed around its hyphens, as cmark-gfm reads it: `bbb` over `-` and a line tabulation is a table of one column. A row of hyphens alone under a paragraph is still a setext heading's underline.
-
