@@ -6,12 +6,12 @@
     .paths = .{ "build.zig", "build.zig.zon", "src", "docs", "README.md", "CHANGELOG.md", "LICENSE", "LICENSES" },
     .dependencies = .{
         .aegis = .{
-            .url = "git+https://github.com/pedronaugusto/aegis?ref=v0.4.0#4739dccd71cfc16b0c15bc27e2d7dca76de9bc21",
-            .hash = "aegis-0.4.0-rsxouv1KDgCdGc-mhY-qBfyE70ar4OQiGGKHKndirWnQ",
+            .url = "git+https://github.com/pedronaugusto/aegis?ref=v0.5.0#a5e31b494b9a1eda241e9c9dc2b2920a486fe0fe",
+            .hash = "aegis-0.5.0-rsxourRYDgBBm4yeSU1kWElAmUuEXC6qoeZPs_FVLRUs",
         },
         .xenoglyph = .{
-            .url = "git+https://github.com/pedronaugusto/xenoglyph?ref=v0.6.1#f27799d23ad99c2ae2a23a5fab401c0e9efebc9e",
-            .hash = "xenoglyph-0.6.1-YKXZlR8GVADYSXwNQ3Wdc0cikk1d7nzHrYwfrCLIw_L-",
+            .url = "git+https://github.com/pedronaugusto/xenoglyph?ref=v0.6.2#d0b47641552f0af54612cdd09bf14e9e85da17fe",
+            .hash = "xenoglyph-0.6.2-YKXZlVYGVACQTYyvTA7CrKG4FjdnoF6-TVafb1ENuf7F",
         },
     },
     .dev_dependencies = .{

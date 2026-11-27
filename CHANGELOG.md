@@ -23,6 +23,7 @@ follow [Semantic Versioning](https://semver.org/).
 
 - Pins aegis f52eabe, still 0.2.4, and xenoglyph ab4d381 on it, the one aegis the family builds on; development on preflight's ci-standard 158c176 and shakedown 327bc61.
 - datapad's own development holds it to the family's policy: `"policy": "family"` in ci/preflight.json, beside the hardened profile ci/workflow.json already declares; the hardened and hardened-tsan legs pass. `zig build check-consumer` builds ci/consumer.zig as a project that depends on datapad alone would, and runs among the gate's extra checks. .github/workflows/ci.yml, generated (`bay dev generate`), runs that gate on GitHub: datapad had none. .gitattributes keeps every file LF on every platform: a Windows checkout wrote the spec texts with CRLF, and the spec tests found none of their examples.
+- Pins aegis 0.5.0 and xenoglyph 0.6.2.
 
 ### Fixed
 
